@@ -1,0 +1,487 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Card, UserProfile } from '@shared/schema';
+import { GameMove } from '@shared/gameEngine';
+import PlayerArea from './PlayerArea';
+import PlayingCard from './PlayingCard';
+import FoundationArea from './FoundationArea';
+import Scoreboard from './Scoreboard';
+import GameChat from './GameChat';
+import ScoreboardTicker from './ScoreboardTicker';
+import AccountDropdown from './AccountDropdown';
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
+import { Trophy, LogOut, MessageSquare, Wifi, WifiOff } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { useQuery } from '@tanstack/react-query';
+import { getQueryFn } from '@/lib/queryClient';
+import type { GameState } from '@shared/schema';
+import type { ConnectionState } from '@/hooks/use-game-sync';
+import { useMousePosition } from '@/hooks/use-mouse-position';
+
+interface GameBoardInteractiveProps {
+  gameState: GameState;
+  currentPlayerId: string;
+  connectionState: ConnectionState;
+  sendMove: (move: GameMove) => void;
+  sendChat: (message: string) => void;
+  sendNextRound: () => void;
+  onLeaveGame?: () => void;
+}
+
+export default function GameBoardInteractive({
+  gameState,
+  currentPlayerId,
+  connectionState,
+  sendMove,
+  sendChat,
+  sendNextRound,
+  onLeaveGame,
+}: GameBoardInteractiveProps) {
+  const { toast } = useToast();
+
+  const [selectedCard, setSelectedCard] = useState<{
+    source: 'bone' | 'tableau' | 'draw';
+    playerId: string;
+    columnIndex?: number;
+    cardIndex?: number;
+  } | null>(null);
+  const [showTutorial, setShowTutorial] = useState(true);
+
+  const { data: profile } = useQuery<UserProfile>({
+    queryKey: ['/api/profile'],
+    queryFn: getQueryFn({ on401: 'returnNull' }),
+  });
+
+  const effectiveState = gameState;
+  const currentPlayer = effectiveState.players.find((p) => p.id === currentPlayerId);
+  const otherPlayers = effectiveState.players.filter((p) => p.id !== currentPlayerId);
+  const winner = effectiveState.players.find((p) => p.id === effectiveState.winnerId);
+  const canDeclareOut = currentPlayer?.bonePile.length === 0 && effectiveState.status === 'playing';
+
+  useEffect(() => {
+    if (showTutorial && effectiveState.status === 'playing') {
+      toast({
+        title: 'How to Play',
+        description:
+          "Click any card (glows yellow), then click destination to move it. Build foundations (A-K same suit) or tableau (descending, alternating colors)!",
+        duration: 10000,
+      });
+      setShowTutorial(false);
+    }
+  }, [effectiveState.status, showTutorial, toast]);
+
+  // Clear stale selection if the underlying state changes (e.g. another player moved)
+  useEffect(() => {
+    if (!selectedCard) return;
+    const player = effectiveState.players.find((p) => p.id === selectedCard.playerId);
+    if (!player) {
+      setSelectedCard(null);
+      return;
+    }
+    if (selectedCard.source === 'bone' && player.bonePile.length === 0) {
+      setSelectedCard(null);
+    }
+  }, [effectiveState, selectedCard]);
+
+  const handleDeclareOut = useCallback(() => {
+    sendMove({ type: 'declare-out' });
+  }, [sendMove]);
+
+  const handleTableauClick = useCallback(
+    (columnIndex: number) => {
+      if (!selectedCard) return;
+      if (selectedCard.source === 'tableau' && selectedCard.columnIndex === columnIndex) return;
+
+      let move: GameMove | null = null;
+      if (selectedCard.source === 'bone') {
+        move = { type: 'bone-to-tableau', targetColumn: columnIndex };
+      } else if (
+        selectedCard.source === 'tableau' &&
+        selectedCard.columnIndex !== undefined &&
+        selectedCard.cardIndex !== undefined
+      ) {
+        move = {
+          type: 'tableau-to-tableau',
+          sourceColumn: selectedCard.columnIndex,
+          cardIndex: selectedCard.cardIndex,
+          targetColumn: columnIndex,
+        };
+      } else if (selectedCard.source === 'draw' && selectedCard.cardIndex !== undefined) {
+        move = {
+          type: 'draw-to-tableau',
+          drawCardIndex: selectedCard.cardIndex,
+          targetColumn: columnIndex,
+        };
+      }
+      if (!move) return;
+
+      sendMove(move);
+      setSelectedCard(null);
+    },
+    [selectedCard, sendMove],
+  );
+
+  const handleCardClick = useCallback(
+    (source: 'bone' | 'tableau' | 'draw', playerId: string, columnIndex?: number, cardIndex?: number) => {
+      if (playerId !== currentPlayerId) return;
+
+      const player = effectiveState.players.find((p) => p.id === playerId);
+      if (!player) return;
+
+      let clickedCard: Card | undefined;
+      if (source === 'bone' && player.bonePile.length > 0) {
+        clickedCard = player.bonePile[player.bonePile.length - 1];
+      } else if (source === 'tableau' && columnIndex !== undefined && cardIndex !== undefined) {
+        const column = player.tableau[columnIndex];
+        if (cardIndex < column.length) clickedCard = column[cardIndex];
+      } else if (source === 'draw' && cardIndex !== undefined) {
+        clickedCard = player.currentDraw[cardIndex];
+      }
+
+      const isSameCard =
+        selectedCard &&
+        selectedCard.source === source &&
+        selectedCard.playerId === playerId &&
+        selectedCard.columnIndex === columnIndex &&
+        selectedCard.cardIndex === cardIndex;
+
+      if (isSameCard) {
+        setSelectedCard(null);
+      } else if (selectedCard && source === 'tableau' && columnIndex !== undefined) {
+        handleTableauClick(columnIndex);
+      } else if (clickedCard && source === 'bone' && !selectedCard) {
+        const emptyColumnIndex = player.tableau.findIndex((col) => col.length === 0);
+        if (emptyColumnIndex !== -1) {
+          sendMove({ type: 'bone-to-tableau', targetColumn: emptyColumnIndex });
+        } else {
+          setSelectedCard({ source, playerId, columnIndex, cardIndex });
+        }
+      } else if (clickedCard) {
+        setSelectedCard({ source, playerId, columnIndex, cardIndex });
+      }
+    },
+    [effectiveState, selectedCard, currentPlayerId, sendMove, handleTableauClick],
+  );
+
+  const handleFoundationClick = useCallback(
+    (pileIndex: number) => {
+      if (!selectedCard) return;
+      const player = effectiveState.players.find((p) => p.id === selectedCard.playerId);
+      if (!player) return;
+
+      let move: GameMove | null = null;
+      if (selectedCard.source === 'bone') {
+        move = { type: 'bone-to-foundation', foundationIndex: pileIndex };
+      } else if (
+        selectedCard.source === 'tableau' &&
+        selectedCard.columnIndex !== undefined &&
+        selectedCard.cardIndex !== undefined
+      ) {
+        const column = player.tableau[selectedCard.columnIndex];
+        if (selectedCard.cardIndex !== column.length - 1) {
+          toast({
+            title: 'Invalid move',
+            description: 'Can only play single cards to foundation (not stacks)',
+            variant: 'destructive',
+          });
+          return;
+        }
+        move = {
+          type: 'tableau-to-foundation',
+          sourceColumn: selectedCard.columnIndex,
+          cardIndex: selectedCard.cardIndex,
+          foundationIndex: pileIndex,
+        };
+      } else if (selectedCard.source === 'draw' && selectedCard.cardIndex !== undefined) {
+        move = { type: 'draw-to-foundation', drawCardIndex: selectedCard.cardIndex, foundationIndex: pileIndex };
+      }
+
+      if (!move) return;
+      sendMove(move);
+      setSelectedCard(null);
+    },
+    [selectedCard, effectiveState, sendMove, toast],
+  );
+
+  const handleFoundationAreaClick = useCallback(() => {
+    if (!selectedCard) return;
+    const player = effectiveState.players.find((p) => p.id === selectedCard.playerId);
+    if (!player) return;
+
+    let card: Card | undefined;
+    if (selectedCard.source === 'bone' && player.bonePile.length > 0) {
+      card = player.bonePile[player.bonePile.length - 1];
+    } else if (
+      selectedCard.source === 'tableau' &&
+      selectedCard.columnIndex !== undefined &&
+      selectedCard.cardIndex !== undefined
+    ) {
+      const column = player.tableau[selectedCard.columnIndex];
+      if (selectedCard.cardIndex !== column.length - 1) {
+        toast({
+          title: 'Invalid move',
+          description: 'Can only play single cards to foundation (not stacks)',
+          variant: 'destructive',
+        });
+        return;
+      }
+      card = column[selectedCard.cardIndex];
+    } else if (selectedCard.source === 'draw' && selectedCard.cardIndex !== undefined) {
+      card = player.currentDraw[selectedCard.cardIndex];
+    }
+
+    if (!card) return;
+
+    let move: GameMove;
+    if (card.rank === 'A') {
+      if (selectedCard.source === 'bone') {
+        move = { type: 'bone-to-foundation', foundationIndex: -1 };
+      } else if (selectedCard.source === 'tableau') {
+        move = {
+          type: 'tableau-to-foundation',
+          sourceColumn: selectedCard.columnIndex!,
+          cardIndex: selectedCard.cardIndex!,
+          foundationIndex: -1,
+        };
+      } else {
+        move = { type: 'draw-to-foundation', drawCardIndex: selectedCard.cardIndex!, foundationIndex: -1 };
+      }
+    } else {
+      let foundIndex = -1;
+      const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+      for (let i = 0; i < effectiveState.foundations.length; i++) {
+        const topCards = effectiveState.foundations[i].cards;
+        const topCard = topCards[topCards.length - 1];
+        if (card.suit === topCard.suit && ranks.indexOf(card.rank) === ranks.indexOf(topCard.rank) + 1) {
+          foundIndex = i;
+          break;
+        }
+      }
+      if (foundIndex === -1) {
+        toast({
+          title: 'Invalid move',
+          description: "Can't play that card on any foundation",
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (selectedCard.source === 'bone') {
+        move = { type: 'bone-to-foundation', foundationIndex: foundIndex };
+      } else if (selectedCard.source === 'tableau') {
+        move = {
+          type: 'tableau-to-foundation',
+          sourceColumn: selectedCard.columnIndex!,
+          cardIndex: selectedCard.cardIndex!,
+          foundationIndex: foundIndex,
+        };
+      } else {
+        move = { type: 'draw-to-foundation', drawCardIndex: selectedCard.cardIndex!, foundationIndex: foundIndex };
+      }
+    }
+
+    sendMove(move);
+    setSelectedCard(null);
+  }, [selectedCard, effectiveState, sendMove, toast]);
+
+  const handleBonePileClick = useCallback(() => {
+    handleCardClick('bone', currentPlayerId);
+  }, [handleCardClick, currentPlayerId]);
+
+  const handleTableauCardClick = useCallback(
+    (col: number, card: number) => {
+      handleCardClick('tableau', currentPlayerId, col, card);
+    },
+    [handleCardClick, currentPlayerId],
+  );
+
+  const handleDrawCardClick = useCallback(
+    (index: number) => {
+      handleCardClick('draw', currentPlayerId, undefined, index);
+    },
+    [handleCardClick, currentPlayerId],
+  );
+
+  const handleDrawPileClick = useCallback(() => {
+    sendMove({ type: 'draw-pile' });
+    setSelectedCard(null);
+  }, [sendMove]);
+
+  const handleNextRound = useCallback(() => {
+    setSelectedCard(null);
+    if (effectiveState.status === 'gameOver') {
+      onLeaveGame?.();
+      return;
+    }
+    sendNextRound();
+  }, [effectiveState.status, onLeaveGame, sendNextRound]);
+
+  const handleSendMessage = (message: string) => {
+    sendChat(message);
+  };
+
+  const shouldShowScoreboard =
+    (effectiveState.status === 'roundEnded' || effectiveState.status === 'gameOver') && effectiveState.roundResults;
+
+  // Resolve the selectedCard descriptor to the actual Card object so we can
+  // render a ghost copy pinned to the cursor.
+  const ghostCard: Card | undefined = (() => {
+    if (!selectedCard) return undefined;
+    const player = effectiveState.players.find((p) => p.id === selectedCard.playerId);
+    if (!player) return undefined;
+    if (selectedCard.source === 'bone') {
+      return player.bonePile[player.bonePile.length - 1];
+    }
+    if (
+      selectedCard.source === 'tableau' &&
+      selectedCard.columnIndex !== undefined &&
+      selectedCard.cardIndex !== undefined
+    ) {
+      return player.tableau[selectedCard.columnIndex]?.[selectedCard.cardIndex];
+    }
+    if (selectedCard.source === 'draw' && selectedCard.cardIndex !== undefined) {
+      return player.currentDraw[selectedCard.cardIndex];
+    }
+    return undefined;
+  })();
+  const mouse = useMousePosition(ghostCard !== undefined);
+
+  return (
+    <div className="min-h-screen felt-bg p-4">
+      {ghostCard && mouse && (
+        <div
+          className="fixed pointer-events-none z-[9998] opacity-90"
+          style={{
+            // Offset slightly so the cursor sits at the top-left of the card,
+            // not dead-center where it would block view of the destination.
+            left: mouse.x + 12,
+            top: mouse.y + 12,
+            transform: 'rotate(-4deg)',
+          }}
+          data-testid="ghost-card"
+        >
+          <PlayingCard card={ghostCard} className="shadow-2xl ring-2 ring-yellow-400/80" />
+        </div>
+      )}
+      {shouldShowScoreboard && (
+        <Scoreboard
+          roundResults={effectiveState.roundResults!}
+          scoringSettings={effectiveState.scoringSettings}
+          onNextRound={handleNextRound}
+          gameOver={effectiveState.status === 'gameOver'}
+          winnerId={effectiveState.winnerId}
+        />
+      )}
+      <div className="max-w-7xl mx-auto space-y-4">
+        <ScoreboardTicker
+          players={effectiveState.players}
+          scoringMethod={effectiveState.scoringSettings.method}
+        />
+
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 glass rounded-xl p-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-xl md:text-2xl font-bold text-gradient-gold">Snatch&GrabIt!</h1>
+            {winner && (
+              <Badge variant="default" className="flex items-center gap-2">
+                <Trophy className="w-4 h-4" />
+                {winner.name} wins!
+              </Badge>
+            )}
+            <span className="text-xs text-gold/40 hidden md:inline">Powered by AppSmith</span>
+          </div>
+          <div className="flex gap-2 items-center flex-wrap">
+            {connectionState !== 'open' && (
+              <Badge
+                variant="outline"
+                className="border-amber-500/40 text-amber-300 flex items-center gap-1"
+                data-testid="badge-connection-state"
+              >
+                {connectionState === 'reconnecting' ? (
+                  <>
+                    <WifiOff className="w-3 h-3" />
+                    Reconnecting…
+                  </>
+                ) : connectionState === 'connecting' ? (
+                  <>
+                    <Wifi className="w-3 h-3" />
+                    Connecting…
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-3 h-3" />
+                    Disconnected
+                  </>
+                )}
+              </Badge>
+            )}
+            <AccountDropdown />
+            {canDeclareOut && (
+              <Button size="sm" onClick={handleDeclareOut} data-testid="button-declare-out" className="btn-gold">
+                <Trophy className="w-4 h-4 mr-2" />
+                Declare Out!
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onLeaveGame}
+              data-testid="button-leave-game"
+              className="glass border-white/10 hover:border-gold/30"
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Leave Game
+            </Button>
+          </div>
+        </div>
+
+        <FoundationArea
+          foundations={effectiveState.foundations}
+          onFoundationClick={handleFoundationClick}
+          onFoundationAreaClick={handleFoundationAreaClick}
+          showMoveHint={selectedCard !== null}
+        />
+
+        {currentPlayer && (
+          <PlayerArea
+            player={currentPlayer}
+            isCurrentPlayer
+            bonePilePosition={(profile?.bonePilePosition as 'left' | 'right') || 'left'}
+            selectedCard={selectedCard}
+            onBonePileClick={handleBonePileClick}
+            onTableauCardClick={handleTableauCardClick}
+            onTableauColumnClick={handleTableauClick}
+            onDrawCardClick={handleDrawCardClick}
+            onDrawPileClick={handleDrawPileClick}
+          />
+        )}
+
+        {currentPlayer && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
+              <MessageSquare className="w-4 h-4" />
+              Chat
+            </h2>
+            <div className="border rounded-lg p-4 h-[350px]" data-testid="chat-container">
+              <GameChat
+                messages={effectiveState.chatMessages || []}
+                currentPlayerId={currentPlayerId}
+                currentPlayerName={currentPlayer?.name || 'Unknown'}
+                onSendMessage={handleSendMessage}
+              />
+            </div>
+          </div>
+        )}
+
+        {otherPlayers.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold text-muted-foreground">Other Players</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {otherPlayers.map((player) => (
+                <PlayerArea key={player.id} player={player} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
