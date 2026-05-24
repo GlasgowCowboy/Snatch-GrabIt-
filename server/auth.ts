@@ -251,7 +251,7 @@ export function setupAuth(app: Express) {
   app.post("/api/reset-password", passwordResetLimiter, async (req, res) => {
     try {
       const { token, newPassword } = req.body;
-      
+
       const resetToken = await storage.getPasswordResetToken(token);
       if (!resetToken) {
         return res.status(400).json({ message: "Invalid or expired token" });
@@ -264,10 +264,10 @@ export function setupAuth(app: Express) {
 
       // Hash the new password
       const hashedPassword = await hashPassword(newPassword);
-      
+
       // Update user password
       await storage.updateUserPassword(resetToken.userId, hashedPassword);
-      
+
       // Delete used token
       await storage.deletePasswordResetToken(token);
 

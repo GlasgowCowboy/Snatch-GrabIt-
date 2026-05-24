@@ -35,6 +35,9 @@ export const users = pgTable(
   },
   (table) => ({
     usernameIdx: index("users_username_idx").on(table.username),
+    // Functional index — getUserByEmail does a case-insensitive lookup
+    // (`lower(email) = lower(?)`), which can't use a plain btree on email.
+    emailLowerIdx: index("users_email_lower_idx").on(sql`lower(${table.email})`),
   }),
 );
 
@@ -55,31 +58,46 @@ export const emailVerificationTokens = pgTable(
 );
 
 // User profiles table
-export const userProfiles = pgTable("user_profiles", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  displayName: text("display_name"),
-  avatarUrl: text("avatar_url"),
-  cardBackUrl: text("card_back_url"), // Custom card back image URL
-  tableTheme: text("table_theme").notNull().default('green'), // 'green', 'light', 'dark', 'normal'
-  bonePilePosition: text("bone_pile_position").notNull().default('left'), // 'left' or 'right' - position of bone pile relative to tableau
-  bio: text("bio"),
-  virtualChips: integer("virtual_chips").notNull().default(1000), // Daily-reset chips used for betting.
-  lastChipReset: timestamp("last_chip_reset", { withTimezone: true }).notNull().defaultNow(), // Track daily chip resets
-  earnedCredits: integer("earned_credits").notNull().default(0), // Persistent credits earned via gameplay (and future Stripe purchases).
-});
+export const userProfiles = pgTable(
+  "user_profiles",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().references(() => users.id),
+    displayName: text("display_name"),
+    avatarUrl: text("avatar_url"),
+    cardBackUrl: text("card_back_url"), // Custom card back image URL
+    tableTheme: text("table_theme").notNull().default('green'), // 'green', 'light', 'dark', 'normal'
+    bonePilePosition: text("bone_pile_position").notNull().default('left'), // 'left' or 'right' - position of bone pile relative to tableau
+    bio: text("bio"),
+    virtualChips: integer("virtual_chips").notNull().default(1000), // Daily-reset chips used for betting.
+    lastChipReset: timestamp("last_chip_reset", { withTimezone: true }).notNull().defaultNow(), // Track daily chip resets
+    earnedCredits: integer("earned_credits").notNull().default(0), // Persistent credits earned via gameplay (and future Stripe purchases).
+  },
+  (table) => ({
+    // Hot path — every chip/credit op and leaderboard join keys on user_id.
+    userIdx: index("user_profiles_user_idx").on(table.userId),
+  }),
+);
 
 // Game history table
-export const games = pgTable("games", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  // Nullable: row is created at room creation so virtual_bets can FK to it,
-  // then started_at/finished_at are populated as the game's lifecycle progresses.
-  startedAt: timestamp("started_at", { withTimezone: true }),
-  finishedAt: timestamp("finished_at", { withTimezone: true }),
-  winnerId: varchar("winner_id"),
-  scoringMethod: text("scoring_method").notNull(), // 'fullHand' or 'round'
-  targetScore: integer("target_score").notNull(),
-});
+export const games = pgTable(
+  "games",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    // Nullable: row is created at room creation so virtual_bets can FK to it,
+    // then started_at/finished_at are populated as the game's lifecycle progresses.
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    winnerId: varchar("winner_id"),
+    scoringMethod: text("scoring_method").notNull(), // 'fullHand' or 'round'
+    targetScore: integer("target_score").notNull(),
+  },
+  (table) => ({
+    // History list orders by finished_at desc — index keeps it cheap as the
+    // games table grows.
+    finishedAtIdx: index("games_finished_at_idx").on(table.finishedAt),
+  }),
+);
 
 // Game participants table (many-to-many relationship)
 export const gameParticipants = pgTable(
@@ -121,6 +139,10 @@ export const virtualBets = pgTable(
     // Hot queries: settlement walks bets per game; user history walks bets per user.
     gameIdx: index("virtual_bets_game_idx").on(table.gameId),
     bettorIdx: index("virtual_bets_bettor_idx").on(table.bettorUserId),
+    // Settlement filters `status = 'pending'` after fetching by gameId; a
+    // composite keeps settleGameBets cheap even if a single game accrues many
+    // historical (won/lost) bets.
+    gameStatusIdx: index("virtual_bets_game_status_idx").on(table.gameId, table.status),
   }),
 );
 

@@ -1,16 +1,18 @@
 // From blueprint: javascript_auth_all_persistance
-import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type GameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings } from "@shared/schema";
+import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings } from "@shared/schema";
 import { users, userProfiles, games, gameParticipants, passwordResetTokens, emailVerificationTokens, virtualBets, adminSettings } from "@shared/schema";
-import { randomUUID } from "crypto";
 import session from "express-session";
-import createMemoryStore from "memorystore";
 import connectPg from "connect-pg-simple";
 import { db } from "./db";
 import { pool } from "./db";
 import { eq, sql, desc, count, avg } from "drizzle-orm";
 
-const MemoryStore = createMemoryStore(session);
 const PostgresSessionStore = connectPg(session);
+
+/** Daily refill amount for play-money chips (resets every 24h). */
+export const DAILY_CHIP_RESET_AMOUNT = 1000;
+/** How often a user's daily chip balance is restored. */
+export const DAILY_CHIP_RESET_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /** Mirror of the credit constants in gameSocket.ts — used when computing history summaries. */
 const PLACEMENT_CREDITS: Record<number, number> = { 1: 100, 2: 25, 3: 10 };
@@ -54,20 +56,20 @@ export interface IStorage {
   createUser(user: InsertUser, displayName?: string): Promise<User>;
   updateUserStripeInfo(userId: string, stripeCustomerId: string, stripeSubscriptionId: string): Promise<User>;
   updateUserTier(userId: string, tier: string): Promise<User>;
-  
+
   // Profile management
   getUserProfile(userId: string): Promise<UserProfile | undefined>;
   createUserProfile(profile: InsertUserProfile): Promise<UserProfile>;
   updateUserProfile(userId: string, updates: Partial<InsertUserProfile>): Promise<UserProfile>;
-  
+
   // Game history (only for paid users)
-  createGame(game: any): Promise<Game>;
+  createGame(game: InsertGame): Promise<Game>;
   updateGame(id: string, updates: { winnerId?: string | null; startedAt?: Date | null; finishedAt?: Date | null }): Promise<Game>;
-  addGameParticipant(participant: any): Promise<GameParticipant>;
+  addGameParticipant(participant: InsertGameParticipant): Promise<GameParticipant>;
   getGameParticipants(gameId: string): Promise<GameParticipant[]>;
   getUserGames(userId: string): Promise<UserGameSummary[]>;
   getLeaderboard(limit?: number): Promise<LeaderboardEntry[]>;
-  
+
   // Password reset
   createPasswordResetToken(token: InsertPasswordResetToken): Promise<PasswordResetToken>;
   getPasswordResetToken(token: string): Promise<PasswordResetToken | undefined>;
@@ -79,7 +81,7 @@ export interface IStorage {
   getEmailVerificationToken(token: string): Promise<EmailVerificationToken | undefined>;
   deleteEmailVerificationToken(token: string): Promise<void>;
   markEmailVerified(userId: string): Promise<User>;
-  
+
   // Virtual betting (entertainment only - no real-world value)
   getUserChipBalance(userId: string): Promise<number>;
   resetDailyChips(userId: string): Promise<UserProfile>;
@@ -91,11 +93,11 @@ export interface IStorage {
   getGameBets(gameId: string): Promise<VirtualBet[]>;
   updateUserChips(userId: string, chipAmount: number): Promise<UserProfile>;
   getChipLeaderboard(limit?: number): Promise<{ userId: string; displayName: string; chips: number }[]>;
-  
+
   // Admin settings
   getAdminSettings(): Promise<AdminSettings>;
   updateAdminSettings(updates: Partial<InsertAdminSettings>): Promise<AdminSettings>;
-  
+
   sessionStore: session.Store;
 }
 
@@ -123,31 +125,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser, displayName?: string): Promise<User> {
-    try {
-      const [user] = await db
-        .insert(users)
-        .values({
-          ...insertUser,
-          tier: 'free',
-        })
-        .returning();
-      
-      console.log('User created:', user.id, user.username);
-      
-      // Create default profile with provided displayName or username as fallback
-      await db.insert(userProfiles).values({
-        userId: user.id,
-        displayName: displayName || user.username,
-        tableTheme: 'green',
-      });
-      
-      console.log('Profile created for user:', user.id);
-      
-      return user;
-    } catch (error) {
-      console.error('Error in createUser:', error);
-      throw error;
-    }
+    const [user] = await db
+      .insert(users)
+      .values({
+        ...insertUser,
+        tier: 'free',
+      })
+      .returning();
+
+    await db.insert(userProfiles).values({
+      userId: user.id,
+      displayName: displayName || user.username,
+      tableTheme: 'green',
+    });
+
+    return user;
   }
 
   async updateUserStripeInfo(userId: string, stripeCustomerId: string, stripeSubscriptionId: string): Promise<User> {
@@ -187,7 +179,7 @@ export class DatabaseStorage implements IStorage {
     return profile;
   }
 
-  async createGame(game: any): Promise<Game> {
+  async createGame(game: InsertGame): Promise<Game> {
     const [newGame] = await db.insert(games).values(game).returning();
     return newGame;
   }
@@ -197,7 +189,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async addGameParticipant(participant: any): Promise<GameParticipant> {
+  async addGameParticipant(participant: InsertGameParticipant): Promise<GameParticipant> {
     const [newParticipant] = await db.insert(gameParticipants).values(participant).returning();
     return newParticipant;
   }
@@ -328,23 +320,18 @@ export class DatabaseStorage implements IStorage {
   async getUserChipBalance(userId: string): Promise<number> {
     const profile = await this.getUserProfile(userId);
     if (!profile) return 0;
-    
-    // Handle profiles without lastChipReset (legacy or new profiles)
+
     if (!profile.lastChipReset) {
       const resetProfile = await this.resetDailyChips(userId);
       return resetProfile.virtualChips;
     }
-    
-    // Check if daily reset is needed (24 hours since last reset)
-    const now = new Date();
-    const lastReset = new Date(profile.lastChipReset);
-    const hoursSinceReset = (now.getTime() - lastReset.getTime()) / (1000 * 60 * 60);
-    
-    if (hoursSinceReset >= 24) {
+
+    const sinceLastResetMs = Date.now() - new Date(profile.lastChipReset).getTime();
+    if (sinceLastResetMs >= DAILY_CHIP_RESET_INTERVAL_MS) {
       const resetProfile = await this.resetDailyChips(userId);
       return resetProfile.virtualChips;
     }
-    
+
     return profile.virtualChips;
   }
 
@@ -352,8 +339,8 @@ export class DatabaseStorage implements IStorage {
     const [profile] = await db
       .update(userProfiles)
       .set({
-        virtualChips: 1000,
-        lastChipReset: new Date()
+        virtualChips: DAILY_CHIP_RESET_AMOUNT,
+        lastChipReset: new Date(),
       })
       .where(eq(userProfiles.userId, userId))
       .returning();
@@ -398,7 +385,7 @@ export class DatabaseStorage implements IStorage {
       .set({ status, payout })
       .where(eq(virtualBets.id, betId))
       .returning();
-    
+
     // If won or void, add chips back to user
     if ((status === 'won' || status === 'void') && bet.bettorUserId) {
       const profile = await this.getUserProfile(bet.bettorUserId);
@@ -407,7 +394,7 @@ export class DatabaseStorage implements IStorage {
         await this.updateUserChips(bet.bettorUserId, newBalance);
       }
     }
-    
+
     return bet;
   }
 
@@ -453,7 +440,7 @@ export class DatabaseStorage implements IStorage {
 
   async getAdminSettings(): Promise<AdminSettings> {
     const [settings] = await db.select().from(adminSettings).limit(1);
-    
+
     // Create default settings if none exist
     if (!settings) {
       const [newSettings] = await db
@@ -462,14 +449,14 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return newSettings;
     }
-    
+
     return settings;
   }
 
   async updateAdminSettings(updates: Partial<InsertAdminSettings>): Promise<AdminSettings> {
     // Get the first (and only) settings record
     const [existing] = await db.select().from(adminSettings).limit(1);
-    
+
     if (!existing) {
       // Create if doesn't exist
       const [newSettings] = await db
@@ -478,7 +465,7 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return newSettings;
     }
-    
+
     // Update existing record
     const [updated] = await db
       .update(adminSettings)

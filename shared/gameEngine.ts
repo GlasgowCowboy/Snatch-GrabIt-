@@ -1,10 +1,12 @@
-import { Card, Suit, Rank, GameState, PlayerState, FoundationPile, RoundResult, ScoringSettings, BurnProposal, BurnVote } from './schema';
-import { generateDeck, dealCards } from './deckUtils';
+import type { Card, Rank, GameState, PlayerState, RoundResult, ScoringSettings, BurnVote } from './schema';
+import { generateDeck, dealCards, NEW_FOUNDATION_INDEX, RANKS } from './deckUtils';
+// Re-export for callers (engine is the public surface for game logic).
+export { NEW_FOUNDATION_INDEX, RANKS } from './deckUtils';
 
 // ── Move Types ──────────────────────────────────────────────────────────────
 
 export type GameMove =
-  | { type: 'bone-to-foundation'; foundationIndex: number } // -1 = new pile
+  | { type: 'bone-to-foundation'; foundationIndex: number } // NEW_FOUNDATION_INDEX = new pile
   | { type: 'bone-to-tableau'; targetColumn: number }
   | { type: 'tableau-to-foundation'; sourceColumn: number; cardIndex: number; foundationIndex: number }
   | { type: 'tableau-to-tableau'; sourceColumn: number; cardIndex: number; targetColumn: number }
@@ -20,9 +22,19 @@ export interface MoveResult {
   error?: string;
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── Game Constants ──────────────────────────────────────────────────────────
 
-const RANKS: Rank[] = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+/** Cards turned over from the draw pile on each "draw" action. */
+export const DRAW_TURN_COUNT = 3;
+
+/** fullHand: bonus added to the declarer's round score. */
+export const DECLARE_OUT_SCORE_BONUS = 5;
+/** fullHand: each leftover bone-pile card costs this many points. */
+export const BONE_PILE_PENALTY = 2;
+/** fullHand: burned cards are penalised the same as leftover bone-pile cards. */
+export const BURNED_CARD_PENALTY = 2;
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 export function getRankValue(rank: string): number {
   return RANKS.indexOf(rank as Rank) + 1;
@@ -49,10 +61,10 @@ export function canPlayOnTableau(card: Card, tableau: Card[]): boolean {
     getRankValue(card.rank) === getRankValue(topCard.rank) - 1;
 }
 
-// ── Deep clone helper (game state is small enough for structured clone) ─────
+// ── Deep clone helper (game state is plain JSON, no class instances) ────────
 
 function cloneState(state: GameState): GameState {
-  return JSON.parse(JSON.stringify(state));
+  return structuredClone(state);
 }
 
 // ── Create initial game state ───────────────────────────────────────────────
@@ -169,8 +181,7 @@ function executeBoneToFoundation(state: GameState, player: PlayerState, foundati
 
   const card = player.bonePile[player.bonePile.length - 1];
 
-  if (foundationIndex === -1) {
-    // New foundation - must be Ace
+  if (foundationIndex === NEW_FOUNDATION_INDEX) {
     if (card.rank !== 'A') {
       return { newState: state, error: 'Only Aces can start new foundation piles' };
     }
@@ -231,7 +242,7 @@ function executeTableauToFoundation(
 
   const card = column[cardIndex];
 
-  if (foundationIndex === -1) {
+  if (foundationIndex === NEW_FOUNDATION_INDEX) {
     if (card.rank !== 'A') {
       return { newState: state, error: 'Only Aces can start new foundation piles' };
     }
@@ -296,7 +307,7 @@ function executeDrawToFoundation(
 
   const card = player.currentDraw[drawCardIndex];
 
-  if (foundationIndex === -1) {
+  if (foundationIndex === NEW_FOUNDATION_INDEX) {
     if (card.rank !== 'A') {
       return { newState: state, error: 'Only Aces can start new foundation piles' };
     }
@@ -346,7 +357,7 @@ function executeDrawToTableau(
 
 function executeDrawPile(state: GameState, player: PlayerState): MoveResult {
   if (player.drawPile.length > 0) {
-    const numToDraw = Math.min(3, player.drawPile.length);
+    const numToDraw = Math.min(DRAW_TURN_COUNT, player.drawPile.length);
     const cardsToTurn = player.drawPile.splice(-numToDraw);
     player.currentDraw.push(...cardsToTurn);
   } else if (player.currentDraw.length > 0) {
@@ -435,9 +446,9 @@ export function calculateRoundResults(state: GameState, declarerId: string): Rou
     if (state.scoringSettings.method === 'fullHand') {
       // Burned cards penalised the same as unplayed bone-pile cards — the burn
       // is a release valve, not a free pass.
-      roundScore = foundationCards - (bonePileRemaining * 2) - (burnedCards * 2);
+      roundScore = foundationCards - (bonePileRemaining * BONE_PILE_PENALTY) - (burnedCards * BURNED_CARD_PENALTY);
       if (player.id === declarerId) {
-        roundScore += 5;
+        roundScore += DECLARE_OUT_SCORE_BONUS;
       }
     } else {
       roundScore = player.id === declarerId ? 1 : 0;

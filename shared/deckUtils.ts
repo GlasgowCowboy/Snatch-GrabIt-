@@ -1,57 +1,68 @@
 import { Card, Suit, Rank } from './schema';
 
-const suits: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
-const ranks: Rank[] = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+/** All four suits in their canonical order. */
+export const SUITS: readonly Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
+/** All thirteen ranks in ascending order (Ace = 1, King = 13). */
+export const RANKS: readonly Rank[] = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+
+/** Cards per standard deck (52). */
+export const DECK_SIZE = SUITS.length * RANKS.length;
+/** Sentinel passed in GameMove.foundationIndex to request a new foundation. */
+export const NEW_FOUNDATION_INDEX = -1;
+
+/** Cards dealt face-down to each player's bone pile at the start of a round. */
+export const BONE_PILE_SIZE = 13;
+/** Number of tableau columns dealt face-up to each player. */
+export const TABLEAU_COLUMN_COUNT = 4;
+/** Remaining cards (52 - 13 - 4 = 35) form the draw pile. */
+export const DRAW_PILE_SIZE = DECK_SIZE - BONE_PILE_SIZE - TABLEAU_COLUMN_COUNT;
+
+function randomCardSuffix(): string {
+  return Math.random().toString(36).slice(2, 11);
+}
 
 export function generateDeck(playerId: string): Card[] {
   const deck: Card[] = [];
-
-  suits.forEach(suit => {
-    ranks.forEach(rank => {
+  for (const suit of SUITS) {
+    for (const rank of RANKS) {
       deck.push({
         suit,
         rank,
-        id: `${playerId}-${suit}-${rank}-${Math.random().toString(36).substr(2, 9)}`,
+        id: `${playerId}-${suit}-${rank}-${randomCardSuffix()}`,
       });
-    });
-  });
-
+    }
+  }
   return deck;
 }
 
 export function shuffleDeck(deck: Card[]): Card[] {
   const shuffled = [...deck];
-
-  // Fisher-Yates shuffle
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-
   return shuffled;
 }
 
-export function dealCards(deck: Card[]) {
-  const shuffledDeck = shuffleDeck(deck);
+export interface DealtCards {
+  bonePile: Card[];
+  tableau: Card[][];
+  drawPile: Card[];
+  currentDraw: Card[];
+}
 
-  // Deal 13 cards to bone pile
-  const bonePile = shuffledDeck.slice(0, 13);
+export function dealCards(deck: Card[]): DealtCards {
+  const shuffled = shuffleDeck(deck);
 
-  // Deal 4 cards to tableau (1 per column)
-  const tableau = [
-    [shuffledDeck[13]],
-    [shuffledDeck[14]],
-    [shuffledDeck[15]],
-    [shuffledDeck[16]],
-  ];
+  const bonePile = shuffled.slice(0, BONE_PILE_SIZE);
 
-  // Remaining 35 cards go to draw pile
-  const drawPile = shuffledDeck.slice(17);
+  const tableauStart = BONE_PILE_SIZE;
+  const tableau: Card[][] = [];
+  for (let i = 0; i < TABLEAU_COLUMN_COUNT; i++) {
+    tableau.push([shuffled[tableauStart + i]]);
+  }
 
-  return {
-    bonePile,
-    tableau,
-    drawPile,
-    currentDraw: [] as Card[],
-  };
+  const drawPile = shuffled.slice(tableauStart + TABLEAU_COLUMN_COUNT);
+
+  return { bonePile, tableau, drawPile, currentDraw: [] };
 }

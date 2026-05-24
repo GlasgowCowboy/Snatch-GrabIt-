@@ -68,14 +68,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/profile", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    
+
     // Validate input with Zod schema to prevent data corruption
     const profileUpdateSchema = z.object({
       displayName: z.string().max(50).optional(),
       bio: z.string().max(500).optional(),
       bonePilePosition: z.enum(['left', 'right']).optional(),
     });
-    
+
     try {
       const validated = profileUpdateSchema.parse(req.body);
       const profile = await storage.updateUserProfile(req.user!.id, validated);
@@ -193,7 +193,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/betting/place", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    
+
     try {
       // UUID shape for ids — virtual_bets has FKs on game_id and target_user_id,
       // so anything that isn't a real UUID would just trip a Postgres constraint
@@ -213,9 +213,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         (data) => data.betType === 'confidence' || !!data.targetPlayerName,
         { message: 'Target player is required for non-confidence bets', path: ['targetPlayerName'] },
       );
-      
+
       const validated = betSchema.parse(req.body);
-      
+
       // Calculate potential payout based on bet type
       let payout = 0;
       if (validated.betType === 'confidence') {
@@ -225,7 +225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         payout = validated.chipAmount * 2; // 2x for side bets
       }
-      
+
       const bet = await storage.placeBet({
         gameId: validated.gameId,
         bettorUserId: req.user!.id,
@@ -237,7 +237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         payout,
         status: 'pending',
       });
-      
+
       res.json(bet);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -277,7 +277,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/betting/reset", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    
+
     const profile = await storage.resetDailyChips(req.user!.id);
     res.json({ chips: profile.virtualChips });
   });
@@ -285,22 +285,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Admin routes (admin-only access)
   app.get("/api/admin/settings", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    
+
     if (!req.user!.isAdmin) {
       return res.status(403).json({ message: "Admin access required" });
     }
-    
+
     const settings = await storage.getAdminSettings();
     res.json(settings);
   });
 
   app.patch("/api/admin/settings", async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    
+
     if (!req.user!.isAdmin) {
       return res.status(403).json({ message: "Admin access required" });
     }
-    
+
     const updateSchema = z.object({
       easyMoveDelayMin: z.number().min(100).max(5000).optional(),
       easyMoveDelayMax: z.number().min(100).max(5000).optional(),
@@ -316,7 +316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       sponsorLink: z.string().url().optional().nullable(),
       sponsorEnabled: z.boolean().optional(),
     });
-    
+
     try {
       const validated = updateSchema.parse(req.body);
       const settings = await storage.updateAdminSettings(validated);
@@ -332,11 +332,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Public endpoint to get sponsor settings (for display)
   app.get("/api/sponsor", async (req, res) => {
     const settings = await storage.getAdminSettings();
-    
+
     if (!settings.sponsorEnabled) {
       return res.json({ enabled: false });
     }
-    
+
     res.json({
       enabled: true,
       logoUrl: settings.sponsorLogoUrl,

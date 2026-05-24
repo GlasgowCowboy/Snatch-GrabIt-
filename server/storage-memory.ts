@@ -1,10 +1,13 @@
-import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type GameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings } from "@shared/schema";
+import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import createMemoryStore from "memorystore";
-import { IStorage, UserGameSummary, LeaderboardEntry } from "./storage";
+import { IStorage, UserGameSummary, LeaderboardEntry, DAILY_CHIP_RESET_AMOUNT, DAILY_CHIP_RESET_INTERVAL_MS } from "./storage";
 
 const MemoryStore = createMemoryStore(session);
+const SESSION_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DECLARE_OUT_CREDIT_BONUS_HISTORY = 25;
+const PLACEMENT_CREDITS: Record<number, number> = { 1: 100, 2: 25, 3: 10 };
 
 export class MemoryStorage implements IStorage {
   sessionStore: session.Store;
@@ -20,7 +23,7 @@ export class MemoryStorage implements IStorage {
   private adminSettingsRow: AdminSettings | null = null;
 
   constructor() {
-    this.sessionStore = new MemoryStore({ checkPeriod: 86400000 });
+    this.sessionStore = new MemoryStore({ checkPeriod: SESSION_PRUNE_INTERVAL_MS });
   }
 
   async getUser(id: string): Promise<User | undefined> {
@@ -65,7 +68,7 @@ export class MemoryStorage implements IStorage {
       tableTheme: 'green',
       bonePilePosition: 'left',
       bio: null,
-      virtualChips: 1000,
+      virtualChips: DAILY_CHIP_RESET_AMOUNT,
       lastChipReset: new Date(),
       earnedCredits: 0,
     };
@@ -101,7 +104,7 @@ export class MemoryStorage implements IStorage {
       tableTheme: profile.tableTheme ?? 'green',
       bonePilePosition: profile.bonePilePosition ?? 'left',
       bio: profile.bio ?? null,
-      virtualChips: profile.virtualChips ?? 1000,
+      virtualChips: profile.virtualChips ?? DAILY_CHIP_RESET_AMOUNT,
       lastChipReset: profile.lastChipReset ?? new Date(),
       earnedCredits: profile.earnedCredits ?? 0,
     };
@@ -115,11 +118,13 @@ export class MemoryStorage implements IStorage {
     return profile;
   }
 
-  async createGame(game: any): Promise<Game> {
+  async createGame(game: InsertGame): Promise<Game> {
     const id = randomUUID();
+    // startedAt is intentionally null at create — it's filled in by updateGame
+    // when the lobby actually starts (matches the InsertGame .omit shape).
     const newGame: Game = {
       id,
-      startedAt: game.startedAt ?? null,
+      startedAt: null,
       finishedAt: game.finishedAt ?? null,
       winnerId: game.winnerId ?? null,
       scoringMethod: game.scoringMethod,
@@ -138,7 +143,7 @@ export class MemoryStorage implements IStorage {
     return game;
   }
 
-  async addGameParticipant(participant: any): Promise<GameParticipant> {
+  async addGameParticipant(participant: InsertGameParticipant): Promise<GameParticipant> {
     const newParticipant: GameParticipant = {
       id: randomUUID(),
       gameId: participant.gameId,
@@ -157,13 +162,12 @@ export class MemoryStorage implements IStorage {
   }
 
   async getUserGames(userId: string): Promise<UserGameSummary[]> {
-    const PLACEMENT_CREDITS: Record<number, number> = { 1: 100, 2: 25, 3: 10 };
     return this.participants
       .filter((p) => p.userId === userId)
       .map((p) => {
         const game = this.gamesList.get(p.gameId);
         const totalPlayers = this.participants.filter((x) => x.gameId === p.gameId).length;
-        const credits = (PLACEMENT_CREDITS[p.placement ?? 0] ?? 0) + (p.declaredOut ? 25 : 0);
+        const credits = (PLACEMENT_CREDITS[p.placement ?? 0] ?? 0) + (p.declaredOut ? DECLARE_OUT_CREDIT_BONUS_HISTORY : 0);
         return {
           gameId: p.gameId,
           scoringMethod: game?.scoringMethod ?? 'fullHand',
@@ -182,7 +186,6 @@ export class MemoryStorage implements IStorage {
   }
 
   async getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
-    const PLACEMENT_CREDITS: Record<number, number> = { 1: 100, 2: 25, 3: 10 };
     const byUser = new Map<string, { displayName: string; gamesPlayed: number; wins: number; placementSum: number; earnedCredits: number }>();
 
     for (const p of this.participants) {
@@ -271,11 +274,8 @@ export class MemoryStorage implements IStorage {
       return resetProfile.virtualChips;
     }
 
-    const now = new Date();
-    const lastReset = new Date(profile.lastChipReset);
-    const hoursSinceReset = (now.getTime() - lastReset.getTime()) / (1000 * 60 * 60);
-
-    if (hoursSinceReset >= 24) {
+    const sinceLastResetMs = Date.now() - new Date(profile.lastChipReset).getTime();
+    if (sinceLastResetMs >= DAILY_CHIP_RESET_INTERVAL_MS) {
       const resetProfile = await this.resetDailyChips(userId);
       return resetProfile.virtualChips;
     }
@@ -285,7 +285,7 @@ export class MemoryStorage implements IStorage {
 
   async resetDailyChips(userId: string): Promise<UserProfile> {
     const profile = this.profiles.get(userId)!;
-    profile.virtualChips = 1000;
+    profile.virtualChips = DAILY_CHIP_RESET_AMOUNT;
     profile.lastChipReset = new Date();
     return profile;
   }
