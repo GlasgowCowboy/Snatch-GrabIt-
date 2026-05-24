@@ -19,15 +19,14 @@ interface Stat {
 
 export default function PlayerStats() {
   const { user } = useAuth();
-  const isPaid = user?.tier === 'paid';
 
   const { data: games, isLoading } = useQuery<GameHistoryEntry[]>({
     queryKey: ['/api/games/history'],
     queryFn: getQueryFn({ on401: 'returnNull' }),
-    enabled: !!user && isPaid,
+    enabled: !!user,
   });
 
-  if (!user || !isPaid) {
+  if (!user) {
     return (
       <Card className="w-full">
         <CardHeader>
@@ -35,9 +34,7 @@ export default function PlayerStats() {
             <Trophy className="w-5 h-5" />
             Your Stats
           </CardTitle>
-          <CardDescription>
-            {!user ? 'Log in to see your performance' : 'Available with a paid account'}
-          </CardDescription>
+          <CardDescription>Log in to see your performance</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-center py-6 text-muted-foreground space-y-2">

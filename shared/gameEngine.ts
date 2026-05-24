@@ -1,4 +1,4 @@
-import { Card, Suit, Rank, GameState, PlayerState, FoundationPile, RoundResult, ScoringSettings } from './schema';
+import { Card, Suit, Rank, GameState, PlayerState, FoundationPile, RoundResult, ScoringSettings, BurnProposal, BurnVote } from './schema';
 import { generateDeck, dealCards } from './deckUtils';
 
 // ── Move Types ──────────────────────────────────────────────────────────────
@@ -11,7 +11,9 @@ export type GameMove =
   | { type: 'draw-to-foundation'; drawCardIndex: number; foundationIndex: number }
   | { type: 'draw-to-tableau'; drawCardIndex: number; targetColumn: number }
   | { type: 'draw-pile' }
-  | { type: 'declare-out' };
+  | { type: 'declare-out' }
+  | { type: 'propose-burn' }
+  | { type: 'vote-burn'; vote: 'yes' | 'no' };
 
 export interface MoveResult {
   newState: GameState;
@@ -56,7 +58,7 @@ function cloneState(state: GameState): GameState {
 // ── Create initial game state ───────────────────────────────────────────────
 
 export function createInitialGameState(
-  players: { id: string; name: string; cardBackImage?: string }[],
+  players: { id: string; name: string; cardBackImage?: string; isAI?: boolean }[],
   scoringSettings: ScoringSettings,
 ): GameState {
   return {
@@ -68,7 +70,9 @@ export function createInitialGameState(
         id: p.id,
         name: p.name,
         cardBackImage: p.cardBackImage,
+        isAI: p.isAI ?? false,
         score: 0,
+        burnPile: [],
         ...cards,
       };
     }),
@@ -115,6 +119,12 @@ export function executeMove(state: GameState, playerId: string, move: GameMove):
 
     case 'draw-pile':
       return executeDrawPile(newState, player);
+
+    case 'propose-burn':
+      return executeProposeBurn(newState, player);
+
+    case 'vote-burn':
+      return executeVoteBurn(newState, player, move.vote);
 
     default:
       return { newState: state, error: 'Unknown move type' };
@@ -348,6 +358,66 @@ function executeDrawPile(state: GameState, player: PlayerState): MoveResult {
   return { newState: state };
 }
 
+// ── Burn (voted unstick) ────────────────────────────────────────────────────
+
+function resolveBurnIfReady(state: GameState): void {
+  if (!state.burnProposal) return;
+  const votes = Object.values(state.burnProposal.votes);
+  if (votes.some(v => v === 'no')) {
+    // Any "no" cancels the proposal.
+    state.burnProposal = undefined;
+    return;
+  }
+  if (votes.every(v => v === 'yes')) {
+    // Unanimous → pop the proposer's bone-pile top into their burnPile.
+    const proposer = state.players.find(p => p.id === state.burnProposal!.proposerId);
+    if (proposer && proposer.bonePile.length > 0) {
+      const card = proposer.bonePile.pop()!;
+      proposer.burnPile.push(card);
+    }
+    state.burnProposal = undefined;
+  }
+}
+
+function executeProposeBurn(state: GameState, player: PlayerState): MoveResult {
+  if (state.burnProposal) {
+    return { newState: state, error: 'Another burn vote is already in progress' };
+  }
+  if (player.bonePile.length === 0) {
+    return { newState: state, error: 'No cards left to burn' };
+  }
+  const votes: Record<string, BurnVote> = {};
+  for (const p of state.players) {
+    if (p.id === player.id) votes[p.id] = 'yes'; // proposer implicitly agrees
+    else if (p.isAI) votes[p.id] = 'yes'; // AI auto-yes
+    else votes[p.id] = 'pending';
+  }
+  state.burnProposal = {
+    proposerId: player.id,
+    votes,
+    createdAt: Date.now(),
+  };
+  // If we are the only human (e.g. solo vs AI), the vote resolves immediately.
+  resolveBurnIfReady(state);
+  return { newState: state };
+}
+
+function executeVoteBurn(state: GameState, player: PlayerState, vote: 'yes' | 'no'): MoveResult {
+  const proposal = state.burnProposal;
+  if (!proposal) {
+    return { newState: state, error: 'No burn vote in progress' };
+  }
+  if (!(player.id in proposal.votes)) {
+    return { newState: state, error: 'You are not eligible to vote on this burn' };
+  }
+  if (proposal.votes[player.id] !== 'pending') {
+    return { newState: state, error: 'You have already voted on this burn' };
+  }
+  proposal.votes[player.id] = vote;
+  resolveBurnIfReady(state);
+  return { newState: state };
+}
+
 // ── Scoring ─────────────────────────────────────────────────────────────────
 
 export function calculateRoundResults(state: GameState, declarerId: string): RoundResult[] {
@@ -359,10 +429,13 @@ export function calculateRoundResults(state: GameState, declarerId: string): Rou
 
     const bonePileRemaining = player.bonePile.length;
     const tableauRemaining = player.tableau.reduce((sum, col) => sum + col.length, 0);
+    const burnedCards = player.burnPile.length;
 
     let roundScore = 0;
     if (state.scoringSettings.method === 'fullHand') {
-      roundScore = foundationCards - (bonePileRemaining * 2);
+      // Burned cards penalised the same as unplayed bone-pile cards — the burn
+      // is a release valve, not a free pass.
+      roundScore = foundationCards - (bonePileRemaining * 2) - (burnedCards * 2);
       if (player.id === declarerId) {
         roundScore += 5;
       }
@@ -376,6 +449,7 @@ export function calculateRoundResults(state: GameState, declarerId: string): Rou
       foundationCards,
       bonePileRemaining,
       tableauRemaining,
+      burnedCards,
       declaredOut: player.id === declarerId,
       roundScore,
       totalScore: player.score + roundScore,
@@ -394,9 +468,12 @@ export function startNewRound(state: GameState): GameState {
     return {
       ...player,
       ...dealt,
+      burnPile: [],
       roundScore: 0,
     };
   });
+
+  newState.burnProposal = undefined;
 
   newState.foundations = [];
   newState.roundResults = undefined;

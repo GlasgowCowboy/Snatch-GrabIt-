@@ -1,0 +1,1 @@
+ALTER TABLE "user_profiles" ADD COLUMN "earned_credits" integer DEFAULT 0 NOT NULL;

@@ -37,7 +37,7 @@ export default function AccountDropdown() {
   };
 
   const handleStats = () => {
-    setLocation('/stats');
+    setLocation('/history?tab=leaderboard');
   };
 
   if (!user) {

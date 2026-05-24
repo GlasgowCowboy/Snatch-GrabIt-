@@ -1,10 +1,35 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-async function throwIfResNotOk(res: Response) {
-  if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+/**
+ * Throws an Error whose `message` is the server's user-facing error message —
+ * extracted from a `{ message: string }` JSON body when present. Falls back to
+ * status text. Status code is attached as a property so callers can branch on
+ * it without parsing the message.
+ */
+class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
   }
+}
+
+async function throwIfResNotOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  const contentType = res.headers.get('content-type') ?? '';
+  let message = res.statusText || `Request failed (${res.status})`;
+  try {
+    if (contentType.includes('application/json')) {
+      const body = await res.json();
+      if (body && typeof body.message === 'string') message = body.message;
+    } else {
+      const text = (await res.text()).trim();
+      if (text) message = text;
+    }
+  } catch {
+    // ignore parse failure — keep the statusText fallback
+  }
+  throw new ApiError(message, res.status);
 }
 
 export async function apiRequest(

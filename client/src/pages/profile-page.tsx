@@ -59,7 +59,7 @@ export default function ProfilePage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Failed to update profile',
+        title: "Couldn't update profile",
         description: error.message,
         variant: 'destructive',
       });

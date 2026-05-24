@@ -3,6 +3,26 @@ import express from 'express';
 import { type Server as HttpServer } from 'http';
 import { AddressInfo } from 'net';
 import { registerRoutes } from '../routes';
+import { storage } from '../storage';
+import { MemoryStorage } from '../storage-memory';
+
+/**
+ * Reach into MemoryStorage to find the most recent password-reset token for a
+ * user — emulates what a real email recipient would have received now that the
+ * forgot-password endpoint no longer leaks the token in the response.
+ */
+function mostRecentResetTokenForUser(username: string): string | undefined {
+  if (!(storage instanceof MemoryStorage)) {
+    throw new Error('Test requires MemoryStorage');
+  }
+  const users = (storage as MemoryStorage)['users'] as Map<string, { id: string; username: string }>;
+  const user = Array.from(users.values()).find((u) => u.username === username);
+  if (!user) return undefined;
+  const tokens = (storage as MemoryStorage)['resetTokens'] as Map<string, { userId: string; token: string; createdAt: Date }>;
+  const candidates = Array.from(tokens.values()).filter((t) => t.userId === user.id);
+  candidates.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  return candidates[0]?.token;
+}
 
 let httpServer: HttpServer;
 let baseUrl: string;
@@ -109,10 +129,11 @@ describe('Auth REST integration', () => {
       password: 'lowercase',
       email: null,
     });
-    // The route catches Zod errors and returns 500 with the validation message; not ideal
-    // but that's the current contract — we lock it in here.
-    expect(res.status).toBe(500);
-    expect(res.body).toMatch(/password/i);
+    // Zod validation surfaces as 400 with `{ message, errors }` — the same shape
+    // every other validated endpoint uses, so the client only has one contract.
+    expect(res.status).toBe(400);
+    const body = JSON.parse(res.body) as { message: string; errors?: unknown };
+    expect(body.message).toMatch(/password/i);
   });
 
   it('GET /api/user returns 401 when not logged in', async () => {
@@ -155,9 +176,9 @@ describe('Auth REST integration', () => {
   });
 
   it('POST /api/forgot-password does not reveal whether the user exists', async () => {
-    // Real user — returns 200 with token.
+    // Real user with an email — returns the generic success message, no token.
     const username = uniqueUsername('forgot');
-    await registerJSON(makeSession(), { username, password: STRONG_PASSWORD, email: null });
+    await registerJSON(makeSession(), { username, password: STRONG_PASSWORD, email: `${username}@example.com` });
 
     const real = await makeSession().fetch('/api/forgot-password', {
       method: 'POST',
@@ -165,9 +186,10 @@ describe('Auth REST integration', () => {
     });
     expect(real.status).toBe(200);
     const realBody = (await real.json()) as { token?: string; message: string };
-    expect(realBody.token).toBeTypeOf('string');
+    expect(realBody.token).toBeUndefined();
+    expect(realBody.message).toMatch(/reset link/i);
 
-    // Unknown user — must also return 200 with no error message that would leak existence.
+    // Unknown user — identical response shape so a probe can't tell them apart.
     const fake = await makeSession().fetch('/api/forgot-password', {
       method: 'POST',
       body: JSON.stringify({ username: 'nobody-here-' + Date.now() }),
@@ -175,18 +197,21 @@ describe('Auth REST integration', () => {
     expect(fake.status).toBe(200);
     const fakeBody = (await fake.json()) as { token?: string; message: string };
     expect(fakeBody.token).toBeUndefined();
+    expect(fakeBody.message).toBe(realBody.message); // bit-for-bit identical
   });
 
   it('POST /api/reset-password lets a user log in with the new password (end-to-end)', async () => {
     const username = uniqueUsername('reset');
-    await registerJSON(makeSession(), { username, password: STRONG_PASSWORD, email: null });
+    await registerJSON(makeSession(), { username, password: STRONG_PASSWORD, email: `${username}@example.com` });
 
-    // Request a reset token (dev mode returns it in the response).
+    // Trigger a reset email (in test mode the email is console-logged; we
+    // fetch the token directly from storage to simulate clicking the link).
     const forgot = await makeSession().fetch('/api/forgot-password', {
       method: 'POST',
       body: JSON.stringify({ username }),
     });
-    const { token } = (await forgot.json()) as { token: string };
+    expect(forgot.status).toBe(200);
+    const token = mostRecentResetTokenForUser(username);
     expect(token).toBeTypeOf('string');
 
     // Reset to a new password.

@@ -25,21 +25,35 @@ function backoffDelay(attempt: number): number {
   return Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_MS * 2 ** attempt);
 }
 
+export interface UseGameSyncCallbacks {
+  /** Called when the server rejects a move/chat/etc. with a user-facing message. */
+  onError?: (message: string) => void;
+  /** Called once when reconnect attempts have been exhausted (terminal). */
+  onGiveUp?: (reason: string) => void;
+}
+
 export function useGameSync(
   roomCode: string | undefined,
   playerId: string | undefined,
-  onError?: (message: string) => void,
+  callbacks?: UseGameSyncCallbacks,
 ): UseGameSyncResult {
+  const onError = callbacks?.onError;
+  const onGiveUp = callbacks?.onGiveUp;
   const [room, setRoom] = useState<Room | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>('closed');
   const [lastError, setLastError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const errorHandlerRef = useRef(onError);
+  const giveUpHandlerRef = useRef(onGiveUp);
 
   useEffect(() => {
     errorHandlerRef.current = onError;
   }, [onError]);
+
+  useEffect(() => {
+    giveUpHandlerRef.current = onGiveUp;
+  }, [onGiveUp]);
 
   useEffect(() => {
     if (!roomCode || !playerId) {
@@ -93,6 +107,7 @@ export function useGameSync(
           // Server-initiated terminal close (unknown room/player). Don't retry.
           terminal = true;
           setLastError(msg.reason);
+          giveUpHandlerRef.current?.(msg.reason);
         }
       };
 
@@ -100,6 +115,7 @@ export function useGameSync(
         if (cancelled || terminal) return;
         if (attempt >= RECONNECT_MAX_ATTEMPTS) {
           setConnectionState('closed');
+          giveUpHandlerRef.current?.('Lost connection to the server. Refresh the page to reconnect.');
           return;
         }
         const delay = backoffDelay(attempt);
@@ -142,7 +158,18 @@ export function useGameSync(
 
   const sendRaw = (msg: ClientMessage) => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      // Surface the failure instead of silently dropping the click. Without
+      // this the user sees a button that "did nothing" — the most common cause
+      // is the WS dropped (server restart, network flap) and reconnect either
+      // hasn't completed or got a terminal close (room gone). Tell them.
+      errorHandlerRef.current?.(
+        connectionState === 'reconnecting' || connectionState === 'connecting'
+          ? 'Still reconnecting — try again in a moment.'
+          : "You're not connected. Refresh the page to reconnect.",
+      );
+      return;
+    }
     ws.send(JSON.stringify(msg));
   };
 

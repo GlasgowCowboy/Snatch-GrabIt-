@@ -25,14 +25,35 @@ const AI_DELAY_BY_DIFFICULTY: Record<AIDifficulty, { min: number; max: number }>
   hard: { min: 3000, max: 6000 },
 };
 
+// Extend WebSocket with a liveness flag used by the heartbeat interval.
+type LiveWS = WebSocket & { isAlive?: boolean };
+
 class GameSocketServer {
   private wss: WebSocketServer;
   private connectionsByRoom = new Map<string, Set<Conn>>();
-  private aiTimersByRoom = new Map<string, NodeJS.Timeout[]>();
+  // Each value is a Set of live timer handles so we can cancel them precisely and
+  // clear stale handles when a timer fires — preventing the O(N-rounds) timer
+  // multiplication that caused the server hang.
+  private aiTimersByRoom = new Map<string, Set<NodeJS.Timeout>>();
 
   constructor() {
     this.wss = new WebSocketServer({ noServer: true });
     this.wss.on("connection", (ws, req) => this.onConnection(ws, req));
+
+    // Heartbeat: ping every connected socket every 30 s.  Any socket that
+    // doesn't reply to a ping within 30 s is terminated and removed so it
+    // doesn't linger as a zombie in connectionsByRoom.
+    setInterval(() => {
+      this.wss.clients.forEach((rawWs) => {
+        const ws = rawWs as LiveWS;
+        if (ws.isAlive === false) {
+          ws.terminate();
+          return;
+        }
+        ws.isAlive = false;
+        ws.ping();
+      });
+    }, 30_000);
   }
 
   attach(httpServer: HttpServer) {
@@ -109,6 +130,10 @@ class GameSocketServer {
     set.add(conn);
     this.connectionsByRoom.set(code, set);
 
+    // Mark as alive so the heartbeat doesn't immediately kill it.
+    (ws as LiveWS).isAlive = true;
+    ws.on("pong", () => { (ws as LiveWS).isAlive = true; });
+
     this.send(ws, { type: "room", room });
     if (room.gameState) {
       this.send(ws, { type: "state", state: room.gameState });
@@ -145,16 +170,40 @@ class GameSocketServer {
           return;
         }
         room.gameState = result.newState;
-        this.broadcastState(code);
+
         if (prevStatus !== "gameOver" && room.gameState.status === "gameOver") {
+          // Build the userId map once — needed both for credit injection and DB writes.
           const userIdByPlayerId = new Map(
             room.players.map((p) => [p.id, p.userId ?? null]),
           );
+
+          // Inject creditsEarned into each RoundResult *before* broadcasting so
+          // the Scoreboard can show "you earned X credits" without a round-trip.
+          if (room.gameState.roundResults) {
+            const sorted = [...room.gameState.roundResults].sort(
+              (a, b) => b.totalScore - a.totalScore,
+            );
+            room.gameState = {
+              ...room.gameState,
+              roundResults: sorted.map((r, idx) => {
+                if (!userIdByPlayerId.get(r.playerId)) return r; // guest / AI
+                const placementCredits = PLACEMENT_CREDIT_REWARDS[idx + 1] ?? 0;
+                const declaredOutBonus = r.declaredOut ? DECLARE_OUT_CREDIT_BONUS : 0;
+                const creditsEarned = placementCredits + declaredOutBonus;
+                return creditsEarned > 0 ? { ...r, creditsEarned } : r;
+              }),
+            };
+          }
+
+          this.broadcastState(code);
+
           const gameDbId = room.gameDbId;
           const state = room.gameState;
           void finalizeFinishedGame(gameDbId, state, userIdByPlayerId)
             .then(() => settleGameBets(gameDbId))
             .catch((err) => log(`failed to finalize game ${gameDbId}: ${err}`));
+        } else {
+          this.broadcastState(code);
         }
         break;
       }
@@ -180,6 +229,12 @@ class GameSocketServer {
       case "next-round": {
         if (room.gameState.status === "playing") return;
         if (room.gameState.status === "gameOver") return;
+        // IMPORTANT: clear any pending AI timers from the *previous* round before
+        // scheduling new ones.  Without this, old timers fire in the new round and
+        // reschedule themselves — causing an exponential pile-up of concurrent AI
+        // timer chains (one extra chain per round) that is the primary cause of the
+        // ~20-minute server hang.
+        this.clearAITimers(code);
         room.gameState = startNewRound(room.gameState);
         this.broadcastState(code);
         if (room.aiConfig) {
@@ -195,10 +250,18 @@ class GameSocketServer {
   private scheduleAIMove(code: string, aiPlayerId: string, difficulty: AIDifficulty) {
     const { min, max } = AI_DELAY_BY_DIFFICULTY[difficulty];
     const delay = min + Math.random() * (max - min);
-    const timer = setTimeout(() => this.runAIMove(code, aiPlayerId, difficulty), delay);
-    const list = this.aiTimersByRoom.get(code) ?? [];
-    list.push(timer);
-    this.aiTimersByRoom.set(code, list);
+    // Use a placeholder so the closure can reference `timer` after assignment.
+    // eslint-disable-next-line prefer-const
+    let timer: NodeJS.Timeout;
+    timer = setTimeout(() => {
+      // Self-remove so the Set doesn't accumulate stale handles over the lifetime
+      // of a long game (previously caused unbounded memory growth).
+      this.aiTimersByRoom.get(code)?.delete(timer);
+      this.runAIMove(code, aiPlayerId, difficulty);
+    }, delay);
+    const set = this.aiTimersByRoom.get(code) ?? new Set<NodeJS.Timeout>();
+    set.add(timer);
+    this.aiTimersByRoom.set(code, set);
   }
 
   private runAIMove(code: string, aiPlayerId: string, difficulty: AIDifficulty) {
@@ -228,9 +291,9 @@ class GameSocketServer {
   }
 
   private clearAITimers(code: string) {
-    const list = this.aiTimersByRoom.get(code);
-    if (!list) return;
-    list.forEach(clearTimeout);
+    const set = this.aiTimersByRoom.get(code);
+    if (!set) return;
+    set.forEach(clearTimeout);
     this.aiTimersByRoom.delete(code);
   }
 
@@ -253,9 +316,51 @@ class GameSocketServer {
 export const gameSocket = new GameSocketServer();
 
 /**
+ * Earnable credits per placement (1-indexed) + a bonus for declaring out. Kept
+ * in one place so the curve is easy to tune. AI players don't earn — they have
+ * no auth userId to credit.
+ */
+const PLACEMENT_CREDIT_REWARDS: Record<number, number> = {
+  1: 100,
+  2: 25,
+  3: 10,
+};
+const DECLARE_OUT_CREDIT_BONUS = 25;
+
+interface CreditGrant {
+  userId: string;
+  playerName: string;
+  amount: number;
+  reasons: string[];
+}
+
+function computeCreditGrants(
+  state: GameState,
+  ranked: { id: string; name: string }[],
+  userIdByPlayerId: Map<string, string | null>,
+): CreditGrant[] {
+  const grants: CreditGrant[] = [];
+  ranked.forEach((player, idx) => {
+    const userId = userIdByPlayerId.get(player.id);
+    if (!userId) return; // AI / guest — no credits
+    const placement = idx + 1;
+    const placementCredits = PLACEMENT_CREDIT_REWARDS[placement] ?? 0;
+    const declaredOutBonus = state.declaredOutId === player.id ? DECLARE_OUT_CREDIT_BONUS : 0;
+    const amount = placementCredits + declaredOutBonus;
+    if (amount <= 0) return;
+    const reasons: string[] = [];
+    if (placementCredits > 0) reasons.push(`#${placement} (+${placementCredits})`);
+    if (declaredOutBonus > 0) reasons.push(`declared out (+${declaredOutBonus})`);
+    grants.push({ userId, playerName: player.name, amount, reasons });
+  });
+  return grants;
+}
+
+/**
  * Mark an existing games row finished and write one participant row per player.
  * The games row was already created at lobby creation; we only UPDATE here so
- * the id stays stable for bets, etc.
+ * the id stays stable for bets, etc. Also grants persistent earned credits to
+ * authenticated players based on placement + declare-out.
  */
 export async function finalizeFinishedGame(
   gameDbId: string,
@@ -279,7 +384,19 @@ export async function finalizeFinishedGame(
       }),
     ),
   );
-  log(`finalized game ${gameDbId} (${ranked.length} players)`);
+
+  const grants = computeCreditGrants(state, ranked, userIdByPlayerId);
+  await Promise.all(
+    grants.map((g) =>
+      storage
+        .grantCredits(g.userId, g.amount)
+        .catch((err) => log(`credit grant failed for ${g.playerName}: ${err}`)),
+    ),
+  );
+  const grantSummary = grants.length
+    ? ` · credits: ${grants.map((g) => `${g.playerName} +${g.amount} (${g.reasons.join(', ')})`).join('; ')}`
+    : '';
+  log(`finalized game ${gameDbId} (${ranked.length} players)${grantSummary}`);
 }
 
 /**

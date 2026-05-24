@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Label } from "@/components/ui/label";
 import { Redirect } from "wouter";
 import { Spade, Heart, Diamond, Club, CheckCircle2, XCircle } from "lucide-react";
+import Logo from "@/components/Logo";
 import { passwordSchema } from "@shared/schema";
 
 export default function AuthPage() {
@@ -194,7 +195,10 @@ export default function AuthPage() {
             <Diamond className="w-16 h-16 text-red-500" />
             <Club className="w-16 h-16" />
           </div>
-          <h1 className="text-4xl font-bold">Snatch&GrabIt!</h1>
+          <div className="flex items-center justify-center gap-3">
+            <Logo size={44} className="text-primary" />
+            <h1 className="text-4xl font-bold">Snatch&GrabIt!</h1>
+          </div>
           <p className="text-lg text-muted-foreground">
             Real-time multiplayer competitive solitaire. Race to empty your bone pile and dominate the shared foundations!
           </p>

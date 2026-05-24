@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
-import { History, Trophy, Lock } from 'lucide-react';
+import { History, Trophy } from 'lucide-react';
 import { format } from 'date-fns';
 import { getQueryFn } from '@/lib/queryClient';
 import { useAuth } from '@/hooks/use-auth';
@@ -14,12 +14,11 @@ interface GameHistoryEntry {
 
 export default function GameHistory() {
   const { user } = useAuth();
-  const isPaid = user?.tier === 'paid';
 
   const { data: games, isLoading, error } = useQuery<GameHistoryEntry[]>({
     queryKey: ['/api/games/history'],
     queryFn: getQueryFn({ on401: 'returnNull' }),
-    enabled: !!user && isPaid,
+    enabled: !!user,
   });
 
   if (!user) {
@@ -34,27 +33,6 @@ export default function GameHistory() {
         <CardContent>
           <div className="text-center py-8 text-muted-foreground">
             <p>Log in to track your game history.</p>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!isPaid) {
-    return (
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <History className="w-5 h-5" />
-            Game History
-          </CardTitle>
-          <CardDescription>Available with a paid account</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-8 text-muted-foreground space-y-2">
-            <Lock className="w-8 h-8 mx-auto opacity-50" />
-            <p className="font-medium">Upgrade to track every game you play</p>
-            <p className="text-xs">Placements, scores, and declare-outs all logged.</p>
           </div>
         </CardContent>
       </Card>

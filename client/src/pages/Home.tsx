@@ -23,6 +23,15 @@ export default function Home() {
   const [playerId, setPlayerId] = useState<string>('');
   const previousStatusRef = useRef<Room['status'] | undefined>(undefined);
 
+  // Deep-link support: ?join=CODE auto-fills the lobby's join input. We read this
+  // once at mount so subsequent state changes don't re-set the field while typing.
+  const [initialJoinCode] = useState<string | undefined>(() => {
+    if (typeof window === 'undefined') return undefined;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('join');
+    return code ? code.toUpperCase() : undefined;
+  });
+
   const {
     room,
     gameState,
@@ -30,9 +39,17 @@ export default function Home() {
     sendChat,
     sendNextRound,
     connectionState,
-  } = useGameSync(roomCode || undefined, playerId || undefined, (msg) =>
-    toast({ title: 'Invalid move', description: msg, variant: 'destructive' }),
-  );
+  } = useGameSync(roomCode || undefined, playerId || undefined, {
+    onError: (msg) =>
+      toast({ title: 'Invalid move', description: msg, variant: 'destructive' }),
+    onGiveUp: (reason) =>
+      toast({
+        title: 'Connection lost',
+        description: reason,
+        variant: 'destructive',
+        duration: 10000,
+      }),
+  });
 
   // Detect server-side transition from waiting → playing and start countdown locally
   useEffect(() => {
@@ -61,7 +78,7 @@ export default function Home() {
       setUIState('waiting');
     },
     onError: (error: Error) => {
-      toast({ title: 'Could not create room', description: error.message, variant: 'destructive' });
+      toast({ title: "Couldn't create room", description: error.message, variant: 'destructive' });
     },
   });
 
@@ -77,7 +94,7 @@ export default function Home() {
       setUIState('waiting');
     },
     onError: (error: Error) => {
-      toast({ title: 'Could not join room', description: error.message, variant: 'destructive' });
+      toast({ title: "Couldn't join room", description: error.message, variant: 'destructive' });
     },
   });
 
@@ -86,7 +103,7 @@ export default function Home() {
       await apiRequest('POST', `/api/rooms/${roomCode}/ready`, { playerId });
     },
     onError: (error: Error) => {
-      toast({ title: 'Could not update ready state', description: error.message, variant: 'destructive' });
+      toast({ title: "Couldn't update ready state", description: error.message, variant: 'destructive' });
     },
   });
 
@@ -98,7 +115,7 @@ export default function Home() {
       setUIState('countdown');
     },
     onError: (error: Error) => {
-      toast({ title: 'Could not start game', description: error.message, variant: 'destructive' });
+      toast({ title: "Couldn't start game", description: error.message, variant: 'destructive' });
     },
   });
 
@@ -147,6 +164,7 @@ export default function Home() {
         sendChat={sendChat}
         sendNextRound={sendNextRound}
         onLeaveGame={() => leaveMutation.mutate()}
+        gameDbId={room?.gameDbId}
       />
     );
   }
@@ -160,6 +178,7 @@ export default function Home() {
         gameDbId={uiState !== 'lobby' ? room?.gameDbId : undefined}
         players={uiState !== 'lobby' ? room?.players : undefined}
         currentPlayerId={playerId}
+        initialJoinCode={uiState === 'lobby' ? initialJoinCode : undefined}
         onCreateRoom={handleCreateRoom}
         onJoinRoom={handleJoinRoom}
         onStartGame={() => startMutation.mutate()}

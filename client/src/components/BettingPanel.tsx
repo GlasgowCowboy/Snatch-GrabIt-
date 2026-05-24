@@ -15,15 +15,29 @@ interface Player {
   id: string;
   name: string;
   isReady: boolean;
+  /** Real auth user.id (when logged-in); null for AI / guest. Used as target_user_id on the bet. */
+  userId?: string | null;
 }
 
 interface BettingPanelProps {
   players: Player[];
   currentPlayerId: string;
-  gameId?: string; // Game ID for placing bets
+  /**
+   * games.id UUID. Required to actually place a bet — virtual_bets.game_id is
+   * an FK so anything that's not a real games row will be rejected by Postgres.
+   * Pass undefined while the room state is still loading; the panel will render
+   * but the place-bet button stays disabled.
+   */
+  gameId?: string;
 }
 
-export default function BettingPanel({ players, currentPlayerId, gameId = 'temp-game-id' }: BettingPanelProps) {
+// Quick check: any non-empty string that *looks* UUID-shaped. Belt-and-braces
+// guard so a stale prop or rogue caller can't smuggle a roomCode in here.
+function looksLikeUuid(s: string | undefined): boolean {
+  return !!s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
+export default function BettingPanel({ players, currentPlayerId, gameId }: BettingPanelProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [betType, setBetType] = useState<string>('');
@@ -66,52 +80,53 @@ export default function BettingPanel({ players, currentPlayerId, gameId = 'temp-
       setBetAmount('');
     },
     onError: (error: Error) => {
-      let errorMessage = error.message;
-      
-      // Try to parse JSON error response
-      try {
-        // Error format is typically "400: {\"message\":\"...\"}"
-        const jsonPart = error.message.substring(error.message.indexOf('{'));
-        if (jsonPart) {
-          const parsed = JSON.parse(jsonPart);
-          errorMessage = parsed.message || error.message;
-        }
-      } catch {
-        // If parsing fails, try to extract after colon
-        if (error.message.includes(':')) {
-          errorMessage = error.message.split(':').slice(1).join(':').trim();
-        }
-      }
-      
+      // apiRequest now extracts the server's `{ message }` into error.message
+      // directly, so we no longer need to re-parse it.
       toast({
-        title: "Bet Failed",
-        description: errorMessage || "Could not place bet. Please try again.",
-        variant: "destructive",
+        title: "Couldn't place bet",
+        description: error.message || 'Please try again.',
+        variant: 'destructive',
       });
     },
   });
 
+  const gameIdReady = looksLikeUuid(gameId);
+
   const handlePlaceBet = () => {
+    if (!gameIdReady || !gameId) {
+      toast({
+        title: "Couldn't place bet",
+        description: 'Game is still being set up — try again in a second.',
+        variant: 'destructive',
+      });
+      return;
+    }
     const amount = parseInt(betAmount);
     if (!betType || !amount || amount <= 0 || amount > chipBalance) return;
-    
+
+    // Resolve target → real auth user.id (or undefined for AI / guest). The
+    // synthetic room player.id is NOT valid because virtual_bets.target_user_id
+    // is an FK to users.id; passing the room id triggers a Postgres FK error
+    // and chips wouldn't move (the storage transaction rolls back), but the
+    // user still sees an ugly toast. Pipe the real id through instead.
+    const me = players.find(p => p.id === currentPlayerId);
     const targetPlayerData = players.find(p => p.id === targetPlayer);
-    
+
     if (betType === 'confidence') {
-      // Betting on yourself
       placeBetMutation.mutate({
         gameId,
         betType,
-        targetUserId: currentPlayerId,
-        targetPlayerName: players.find(p => p.id === currentPlayerId)?.name || 'You',
+        targetUserId: me?.userId ?? user?.id ?? undefined,
+        targetPlayerName: me?.name ?? 'You',
         chipAmount: amount,
       });
     } else if (targetPlayer && targetPlayerData) {
-      // Betting on another player
       placeBetMutation.mutate({
         gameId,
         betType,
-        targetUserId: targetPlayer,
+        // Real auth id when the target is a registered user; undefined for AI /
+        // guest. Settlement falls back to matching by playerName for those.
+        targetUserId: targetPlayerData.userId ?? undefined,
         targetPlayerName: targetPlayerData.name,
         chipAmount: amount,
       });
@@ -249,15 +264,24 @@ export default function BettingPanel({ players, currentPlayerId, gameId = 'temp-
           </div>
         )}
 
-        {/* Place Bet Button */}
+        {/* Place Bet Button — disabled until the room delivers a real gameId */}
         <Button
           onClick={handlePlaceBet}
-          disabled={!betType || (!targetPlayer && betType !== 'confidence') || !betAmount || parseInt(betAmount) <= 0 || parseInt(betAmount) > chipBalance}
+          disabled={
+            !gameIdReady ||
+            !betType ||
+            (!targetPlayer && betType !== 'confidence') ||
+            !betAmount ||
+            parseInt(betAmount) <= 0 ||
+            parseInt(betAmount) > chipBalance ||
+            placeBetMutation.isPending
+          }
           className="w-full"
           data-testid="button-place-bet"
+          title={!gameIdReady ? 'Waiting for the game to be ready' : undefined}
         >
           <Coins className="w-4 h-4 mr-2" />
-          Place Bet
+          {placeBetMutation.isPending ? 'Placing…' : 'Place Bet'}
         </Button>
 
         {/* Daily Reset Info */}

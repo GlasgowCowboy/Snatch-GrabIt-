@@ -75,22 +75,22 @@ export default function ResetPasswordPage() {
 
       if (response.ok) {
         toast({
-          title: "Success",
-          description: "Password reset successfully. You can now login with your new password.",
+          title: 'Password reset',
+          description: 'You can now log in with your new password.',
         });
         setTimeout(() => navigate("/auth"), 2000);
       } else {
         toast({
-          title: "Error",
-          description: data.message || "Failed to reset password",
-          variant: "destructive",
+          title: "Couldn't reset password",
+          description: data.message || 'Please try again.',
+          variant: 'destructive',
         });
       }
     } catch (error) {
       toast({
-        title: "Error",
-        description: "Failed to connect to server",
-        variant: "destructive",
+        title: "Couldn't reach the server",
+        description: 'Check your connection and try again.',
+        variant: 'destructive',
       });
     } finally {
       setIsLoading(false);

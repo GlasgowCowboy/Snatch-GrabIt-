@@ -4,16 +4,24 @@ import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import AccountDropdown from './AccountDropdown';
 import BettingPanel from './BettingPanel';
-import { Users, Copy, Check, Bot, LogOut } from 'lucide-react';
+import { Users, Copy, Check, Bot, LogOut, Share2, Link as LinkIcon, QrCode } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
 import { Label } from './ui/label';
 import { ScoringMethod, UserProfile } from '@shared/schema';
 import { useAuth } from '@/hooks/use-auth';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getQueryFn } from '@/lib/queryClient';
 import { AIDifficulty } from '@shared/aiPlayer';
 import SponsorBanner from './SponsorBanner';
+import PendingInvites from './PendingInvites';
+import Logo from './Logo';
+import CreditBadge from './CreditBadge';
+import ChipsBadge from './ChipsBadge';
+import RewardedAdButton from './RewardedAdButton';
+import { apiRequest } from '@/lib/queryClient';
+import { useToast } from '@/hooks/use-toast';
 
 interface Player {
   id: string;
@@ -21,6 +29,8 @@ interface Player {
   isReady: boolean;
   isAI?: boolean;
   cardBackImage?: string;
+  /** Real auth user.id (when this player is logged-in); null for AI / guest. */
+  userId?: string | null;
 }
 
 interface GameLobbyProps {
@@ -28,6 +38,7 @@ interface GameLobbyProps {
   gameDbId?: string;
   players?: Player[];
   currentPlayerId?: string; // ID of the current logged-in player
+  initialJoinCode?: string; // Prefill the "join room" input from a deep link (?join=…)
   onCreateRoom?: (playerName: string, cardBackImage?: string, scoringMethod?: ScoringMethod, targetScore?: number, aiConfig?: {numAI: number, difficulty: AIDifficulty}) => void;
   onJoinRoom?: (roomCode: string, playerName: string, cardBackImage?: string) => void;
   onStartGame?: () => void;
@@ -43,6 +54,7 @@ export default function GameLobby({
   gameDbId,
   players = [],
   currentPlayerId,
+  initialJoinCode,
   onCreateRoom,
   onJoinRoom,
   onStartGame,
@@ -60,8 +72,53 @@ export default function GameLobby({
   });
   
   const [playerName, setPlayerName] = useState('');
-  const [joinCode, setJoinCode] = useState('');
+  const [joinCode, setJoinCode] = useState(initialJoinCode?.toUpperCase() ?? '');
   const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [inviteUsername, setInviteUsername] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const inviteByUsernameMutation = useMutation({
+    mutationFn: async (input: { code: string; targetUsername: string }) => {
+      const res = await apiRequest('POST', '/api/invite', input);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: 'Invite sent', description: `Heads-up will appear on @${inviteUsername}'s home page.` });
+      setInviteUsername('');
+      qc.invalidateQueries({ queryKey: ['/api/invites'] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Couldn't send invite", description: e.message, variant: 'destructive' });
+    },
+  });
+
+  const inviteByEmailMutation = useMutation({
+    mutationFn: async (input: { code: string; email: string }) => {
+      const res = await apiRequest('POST', '/api/invite/email', input);
+      return res.json() as Promise<{ delivered: boolean; invite: unknown | null }>;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: 'Invite emailed',
+        description: data.delivered
+          ? `Sent to ${inviteEmail}.`
+          : `Queued for ${inviteEmail}. (No mail provider configured — check the dev console for the link.)`,
+      });
+      setInviteEmail('');
+      qc.invalidateQueries({ queryKey: ['/api/invites'] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Couldn't send invite", description: e.message, variant: 'destructive' });
+    },
+  });
+  const inviteUrl = typeof window !== 'undefined' && roomCode
+    ? `${window.location.origin}/?join=${encodeURIComponent(roomCode)}`
+    : '';
+  const canSystemShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
   const [cardBackImage, setCardBackImage] = useState<string>('');
   const [uploadError, setUploadError] = useState<string>('');
   const [scoringMethod, setScoringMethod] = useState<ScoringMethod>(initialScoringMethod || 'fullHand');
@@ -90,37 +147,84 @@ export default function GameLobby({
     }
   };
 
+  const handleCopyInviteLink = () => {
+    if (!inviteUrl) return;
+    navigator.clipboard.writeText(inviteUrl);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+
+  const handleSystemShare = async () => {
+    if (!inviteUrl) return;
+    try {
+      await navigator.share({
+        title: 'Snatch&GrabIt!',
+        text: `Join my Snatch&GrabIt! game — code ${roomCode}`,
+        url: inviteUrl,
+      });
+    } catch {
+      // User cancelled the share sheet or it's unsupported — silent.
+    }
+  };
+
+  // Card-back image upload constraints. Images are base64-encoded inline in the
+  // create-room JSON body and rebroadcast in every WS room update, so we keep
+  // the limit tight — 1MB is plenty for a card design and stays comfortably
+  // below the 10MB server JSON-body cap even at 4/3× base64 overhead.
+  const MAX_CARD_BACK_BYTES = 1 * 1024 * 1024;
+  const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  const [uploadedFileLabel, setUploadedFileLabel] = useState<string>('');
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     setUploadError('');
-    
+
     if (!file) return;
-    
-    // Check file type
-    if (!file.type.startsWith('image/')) {
-      setUploadError('Please select an image file (JPG, PNG, GIF, etc.)');
-      e.target.value = ''; // Clear the input
+
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      setUploadError(`Unsupported file type (${file.type || 'unknown'}). Use a JPG, PNG, GIF, or WebP image.`);
+      e.target.value = '';
       return;
     }
-    
-    // Check file size (5MB max)
-    const maxSize = 5 * 1024 * 1024; // 5MB in bytes
-    if (file.size > maxSize) {
-      setUploadError(`File too large: ${(file.size / (1024 * 1024)).toFixed(2)}MB (maximum 5MB)`);
-      e.target.value = ''; // Clear the input
+
+    if (file.size > MAX_CARD_BACK_BYTES) {
+      setUploadError(
+        `Image is ${formatFileSize(file.size)} — please choose one under ${formatFileSize(MAX_CARD_BACK_BYTES)}. ` +
+        'Try resizing it or saving at a lower quality.',
+      );
+      e.target.value = '';
       return;
     }
-    
+
     const reader = new FileReader();
     reader.onloadend = () => {
-      setCardBackImage(reader.result as string);
-      setUploadError(''); // Clear any previous errors
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      if (!result.startsWith('data:image/')) {
+        setUploadError("Couldn't read that file as an image. Try a different one.");
+        e.target.value = '';
+        return;
+      }
+      setCardBackImage(result);
+      setUploadedFileLabel(`${file.name} · ${formatFileSize(file.size)}`);
+      setUploadError('');
     };
     reader.onerror = () => {
-      setUploadError('Failed to read file. Please try again.');
-      e.target.value = ''; // Clear the input
+      setUploadError("Couldn't read the file. Try again or pick a different one.");
+      e.target.value = '';
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleClearCardBack = () => {
+    setCardBackImage('');
+    setUploadedFileLabel('');
+    setUploadError('');
   };
 
   // Update target score when scoring method changes
@@ -137,14 +241,20 @@ export default function GameLobby({
 
   return (
     <div className="min-h-screen felt-bg flex items-center justify-center p-4">
-      <div className="absolute top-4 right-4">
+      <div className="absolute top-4 right-4 flex items-center gap-2">
+        <RewardedAdButton />
+        <ChipsBadge />
+        <CreditBadge />
         <AccountDropdown />
       </div>
       <div className="glass-strong rounded-2xl border border-gold/20 w-full max-w-2xl">
         <div className="p-6 pb-0 text-center">
-          <h1 className="text-4xl font-bold text-gradient-gold">
-            Snatch&GrabIt!
-          </h1>
+          <div className="inline-flex items-center justify-center gap-3">
+            <Logo size={40} className="text-gold" />
+            <h1 className="text-4xl font-bold text-gradient-gold">
+              Snatch&GrabIt!
+            </h1>
+          </div>
           <p className="text-gold-light/60 mt-2">
             Competitive Multiplayer Solitaire
             <span className="block text-xs mt-1 text-gold-light/40">Powered by AppSmith</span>
@@ -153,6 +263,15 @@ export default function GameLobby({
         <div className="p-6">
           {!inLobby ? (
             <div className="space-y-6">
+              <PendingInvites
+                onAccept={(code) => {
+                  if (!playerName.trim()) {
+                    toast({ title: 'Enter your name first', description: 'Then click Join again.', variant: 'destructive' });
+                    return;
+                  }
+                  onJoinRoom?.(code, playerName, cardBackImage);
+                }}
+              />
               <div className="space-y-3">
                 <Input
                   placeholder="Enter your name"
@@ -184,17 +303,30 @@ export default function GameLobby({
                     )}
                   </div>
                   {uploadError && (
-                    <p className="text-xs text-destructive" data-testid="text-upload-error">
+                    <p className="text-xs text-destructive" data-testid="text-upload-error" role="alert">
                       {uploadError}
                     </p>
                   )}
                   {!uploadError && cardBackImage && (
-                    <p className="text-xs text-green-600 dark:text-green-400" data-testid="text-upload-success">
-                      ✓ Card back uploaded successfully
-                    </p>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span
+                        className="text-green-600 dark:text-green-400 truncate"
+                        data-testid="text-upload-success"
+                      >
+                        ✓ Ready to use{uploadedFileLabel ? ` — ${uploadedFileLabel}` : ''}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleClearCardBack}
+                        data-testid="button-clear-card-back"
+                        className="text-muted-foreground hover:text-destructive underline shrink-0"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Upload any image file for your card backs. Maximum size: 5MB (no minimum)
+                    JPG, PNG, GIF, or WebP — max 1 MB. Resize first if your file is larger.
                   </p>
                 </div>
                 
@@ -363,14 +495,124 @@ export default function GameLobby({
                   onClick={handleCopyCode}
                   data-testid="button-copy-code"
                   className="text-gold-light/60 hover:text-gold hover:bg-gold/10"
+                  title="Copy room code"
                 >
-                  {copied ? (
-                    <Check className="w-4 h-4" />
-                  ) : (
-                    <Copy className="w-4 h-4" />
-                  )}
+                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                 </Button>
               </div>
+
+              {/* Invite-a-friend row */}
+              <div className="flex flex-col items-center gap-2">
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopyInviteLink}
+                    data-testid="button-copy-invite-link"
+                    className="glass border-gold/20 text-gold-light hover:border-gold/40 hover:bg-gold/10"
+                  >
+                    {linkCopied ? <Check className="w-4 h-4 mr-2" /> : <LinkIcon className="w-4 h-4 mr-2" />}
+                    {linkCopied ? 'Link copied!' : 'Copy invite link'}
+                  </Button>
+                  {canSystemShare && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSystemShare}
+                      data-testid="button-system-share"
+                      className="glass border-gold/20 text-gold-light hover:border-gold/40 hover:bg-gold/10"
+                    >
+                      <Share2 className="w-4 h-4 mr-2" />
+                      Share…
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowQr((v) => !v)}
+                    data-testid="button-toggle-qr"
+                    className="glass border-gold/20 text-gold-light hover:border-gold/40 hover:bg-gold/10"
+                    aria-pressed={showQr}
+                  >
+                    <QrCode className="w-4 h-4 mr-2" />
+                    {showQr ? 'Hide QR' : 'Show QR'}
+                  </Button>
+                </div>
+                <p className="text-xs text-gold-light/40 break-all max-w-md text-center" data-testid="text-invite-url">
+                  {inviteUrl}
+                </p>
+                {showQr && inviteUrl && (
+                  <div
+                    className="p-3 bg-white rounded-lg inline-block mx-auto"
+                    data-testid="invite-qr-code"
+                  >
+                    <QRCodeSVG value={inviteUrl} size={160} level="M" includeMargin={false} />
+                  </div>
+                )}
+              </div>
+
+              {/* Invite by email — works for anyone (sends them a join link) */}
+              {user && roomCode && (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="text-xs text-gold-light/50">Invite by email</div>
+                  <form
+                    className="flex gap-2 w-full max-w-md"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const email = inviteEmail.trim();
+                      if (!email) return;
+                      inviteByEmailMutation.mutate({ code: roomCode, email });
+                    }}
+                  >
+                    <Input
+                      type="email"
+                      placeholder="friend@example.com"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      data-testid="input-invite-email"
+                      className="flex-1"
+                      autoComplete="email"
+                      inputMode="email"
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={!inviteEmail.trim() || inviteByEmailMutation.isPending}
+                      data-testid="button-invite-by-email"
+                      className="btn-gold"
+                    >
+                      {inviteByEmailMutation.isPending ? 'Sending…' : 'Send'}
+                    </Button>
+                  </form>
+                </div>
+              )}
+
+              {/* Invite a registered user by username */}
+              {user && roomCode && (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="text-xs text-gold-light/50">Or invite a registered player by username</div>
+                  <div className="flex gap-2 w-full max-w-md">
+                    <Input
+                      placeholder="Username"
+                      value={inviteUsername}
+                      onChange={(e) => setInviteUsername(e.target.value)}
+                      data-testid="input-invite-username"
+                      className="flex-1"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        inviteByUsernameMutation.mutate({ code: roomCode, targetUsername: inviteUsername.trim() })
+                      }
+                      disabled={!inviteUsername.trim() || inviteByUsernameMutation.isPending}
+                      data-testid="button-invite-by-username"
+                      className="btn-gold"
+                    >
+                      Invite
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               <div className="p-4 glass rounded-lg space-y-2 border border-gold/10">
                 <div className="text-sm font-medium text-gold-light/60">Game Settings</div>
@@ -417,7 +659,7 @@ export default function GameLobby({
                 <BettingPanel
                   players={players}
                   currentPlayerId={currentPlayerId}
-                  gameId={gameDbId ?? roomCode ?? ''}
+                  gameId={gameDbId}
                 />
               )}
 

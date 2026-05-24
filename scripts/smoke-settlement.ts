@@ -63,8 +63,8 @@ async function main() {
     scoringSettings: { method: 'fullHand', targetScore: 50 },
     foundations: [],
     players: [
-      { id: 'p1', name: 'Alice', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], score: 55 },
-      { id: 'p2', name: 'Bob', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], score: 22 },
+      { id: 'p1', name: 'Alice', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], burnPile: [], score: 55 },
+      { id: 'p2', name: 'Bob', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], burnPile: [], score: 22 },
     ],
   };
   // Stamp started_at so the row mirrors a real lifecycle (createRoom → startGame

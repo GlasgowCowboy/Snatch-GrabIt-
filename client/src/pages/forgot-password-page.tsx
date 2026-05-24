@@ -10,7 +10,7 @@ import { ArrowLeft } from "lucide-react";
 export default function ForgotPasswordPage() {
   const [username, setUsername] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [resetToken, setResetToken] = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,28 +24,29 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ username }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
-        // In a real app, this would send an email
-        // For demo, we show the token
-        setResetToken(data.token);
+        // Server returns a generic message regardless of whether the account
+        // exists (so we can't enumerate users). We always tell the user the
+        // same thing — check your email.
+        setSubmitted(true);
         toast({
-          title: "Reset token generated",
-          description: "Copy the token below and use it to reset your password",
+          title: 'Check your email',
+          description: data.message ?? 'If an account matches, a reset link is on its way.',
         });
       } else {
         toast({
-          title: "Error",
-          description: data.message || "Failed to request password reset",
-          variant: "destructive",
+          title: "Couldn't request reset",
+          description: data.message || 'Please try again.',
+          variant: 'destructive',
         });
       }
     } catch (error) {
       toast({
-        title: "Error",
-        description: "Failed to connect to server",
-        variant: "destructive",
+        title: "Couldn't reach the server",
+        description: 'Check your connection and try again.',
+        variant: 'destructive',
       });
     } finally {
       setIsLoading(false);
@@ -56,13 +57,13 @@ export default function ForgotPasswordPage() {
     <div className="min-h-screen flex items-center justify-center p-8 bg-background">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">Forgot Password</CardTitle>
+          <CardTitle className="text-2xl">Forgot password</CardTitle>
           <CardDescription>
-            Enter your username to receive a password reset token
+            Enter your username — we'll email you a link to reset it.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {!resetToken ? (
+          {!submitted ? (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="username">Username</Label>
@@ -76,13 +77,13 @@ export default function ForgotPasswordPage() {
                 />
               </div>
 
-              <Button 
-                type="submit" 
-                className="w-full" 
-                disabled={isLoading}
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={isLoading || !username.trim()}
                 data-testid="button-request-reset"
               >
-                Request Reset Token
+                {isLoading ? 'Sending…' : 'Email me a reset link'}
               </Button>
 
               <div className="text-center text-sm">
@@ -93,21 +94,16 @@ export default function ForgotPasswordPage() {
               </div>
             </form>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-4" data-testid="forgot-password-submitted">
               <div className="p-4 bg-muted rounded-md">
-                <p className="text-sm text-muted-foreground mb-2">Your reset token:</p>
-                <p className="font-mono text-sm break-all bg-background p-2 rounded border" data-testid="text-reset-token">
-                  {resetToken}
+                <p className="text-sm">
+                  If an account with that username exists, we've emailed a link to reset the password.
+                  The link expires in 1 hour.
                 </p>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Copy this token and use it on the reset password page. The token expires in 1 hour.
+              <p className="text-xs text-muted-foreground">
+                Didn't get an email? Check spam, then try again with the username spelled exactly as you registered.
               </p>
-              <Link href={`/reset-password?token=${resetToken}`}>
-                <Button className="w-full" data-testid="button-go-to-reset">
-                  Go to Reset Password
-                </Button>
-              </Link>
               <div className="text-center text-sm">
                 <Link href="/auth" className="text-primary hover:underline inline-flex items-center gap-1">
                   <ArrowLeft className="w-4 h-4" />

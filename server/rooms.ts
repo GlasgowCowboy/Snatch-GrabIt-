@@ -146,6 +146,7 @@ export class RoomManager {
         id: p.id,
         name: p.name,
         cardBackImage: p.cardBackImage,
+        isAI: p.isAI,
       })),
       { method: room.scoringMethod, targetScore: room.targetScore },
     );

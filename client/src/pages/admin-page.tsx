@@ -58,8 +58,8 @@ export default function AdminPage() {
     },
     onError: (error: Error) => {
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to update settings',
+        title: "Couldn't save settings",
+        description: error.message || 'Please try again.',
         variant: 'destructive',
       });
     },

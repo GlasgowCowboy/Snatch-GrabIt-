@@ -1,20 +1,58 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, json, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Session table — matches the schema `connect-pg-simple` auto-creates. We model
+// it explicitly so it's covered by migrations rather than ad-hoc table creation
+// on boot. Naive timestamp matches the library's expectation.
+export const sessions = pgTable(
+  "session",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: json("sess").notNull(),
+    expire: timestamp("expire", { withTimezone: false, mode: 'date', precision: 6 }).notNull(),
+  },
+  (table) => ({
+    expireIdx: index("IDX_session_expire").on(table.expire),
+  }),
+);
+
 // User accounts table
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-  email: text("email"),
-  stripeCustomerId: text("stripe_customer_id"),
-  stripeSubscriptionId: text("stripe_subscription_id"),
-  tier: text("tier").notNull().default('free'), // 'free' or 'paid'
-  isAdmin: boolean("is_admin").notNull().default(false), // Admin access for system configuration
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    username: text("username").notNull().unique(),
+    password: text("password").notNull(),
+    email: text("email"),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    stripeCustomerId: text("stripe_customer_id"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    tier: text("tier").notNull().default('free'), // 'free' or 'paid'
+    isAdmin: boolean("is_admin").notNull().default(false), // Admin access for system configuration
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    usernameIdx: index("users_username_idx").on(table.username),
+  }),
+);
+
+// Email verification tokens — single-use, expire after 24h.
+export const emailVerificationTokens = pgTable(
+  "email_verification_tokens",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().references(() => users.id),
+    token: text("token").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("email_verification_tokens_user_idx").on(table.userId),
+    expiresIdx: index("email_verification_tokens_expires_idx").on(table.expiresAt),
+  }),
+);
 
 // User profiles table
 export const userProfiles = pgTable("user_profiles", {
@@ -26,8 +64,9 @@ export const userProfiles = pgTable("user_profiles", {
   tableTheme: text("table_theme").notNull().default('green'), // 'green', 'light', 'dark', 'normal'
   bonePilePosition: text("bone_pile_position").notNull().default('left'), // 'left' or 'right' - position of bone pile relative to tableau
   bio: text("bio"),
-  virtualChips: integer("virtual_chips").notNull().default(1000), // Virtual currency for betting (no real-world value)
+  virtualChips: integer("virtual_chips").notNull().default(1000), // Daily-reset chips used for betting.
   lastChipReset: timestamp("last_chip_reset", { withTimezone: true }).notNull().defaultNow(), // Track daily chip resets
+  earnedCredits: integer("earned_credits").notNull().default(0), // Persistent credits earned via gameplay (and future Stripe purchases).
 });
 
 // Game history table
@@ -43,39 +82,63 @@ export const games = pgTable("games", {
 });
 
 // Game participants table (many-to-many relationship)
-export const gameParticipants = pgTable("game_participants", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  gameId: varchar("game_id").notNull().references(() => games.id),
-  userId: varchar("user_id").references(() => users.id), // Nullable for guest players
-  playerName: text("player_name").notNull(),
-  score: integer("score").notNull().default(0),
-  placement: integer("placement"), // 1st, 2nd, 3rd, etc.
-  declaredOut: boolean("declared_out").notNull().default(false),
-});
+export const gameParticipants = pgTable(
+  "game_participants",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    gameId: varchar("game_id").notNull().references(() => games.id),
+    userId: varchar("user_id").references(() => users.id), // Nullable for guest players
+    playerName: text("player_name").notNull(),
+    score: integer("score").notNull().default(0),
+    placement: integer("placement"), // 1st, 2nd, 3rd, etc.
+    declaredOut: boolean("declared_out").notNull().default(false),
+  },
+  (table) => ({
+    // Hot query: "all games for user X" hits userId.
+    userIdx: index("game_participants_user_idx").on(table.userId),
+    // Hot query: "all participants for game G" hits gameId.
+    gameIdx: index("game_participants_game_idx").on(table.gameId),
+  }),
+);
 
 // Virtual bets table (for entertainment only - no real-world value)
-export const virtualBets = pgTable("virtual_bets", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  gameId: varchar("game_id").notNull().references(() => games.id),
-  bettorUserId: varchar("bettor_user_id").references(() => users.id), // Nullable for guest players
-  bettorName: text("bettor_name").notNull(),
-  betType: text("bet_type").notNull(), // 'winner', 'declareOut', 'confidence', 'sidebet'
-  targetUserId: varchar("target_user_id").references(() => users.id), // Who they're betting on (if applicable)
-  targetPlayerName: text("target_player_name"), // Name of player being bet on
-  chipAmount: integer("chip_amount").notNull(),
-  payout: integer("payout").notNull().default(0), // Chips won/lost
-  status: text("status").notNull().default('pending'), // 'pending', 'won', 'lost', 'void'
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const virtualBets = pgTable(
+  "virtual_bets",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    gameId: varchar("game_id").notNull().references(() => games.id),
+    bettorUserId: varchar("bettor_user_id").references(() => users.id), // Nullable for guest players
+    bettorName: text("bettor_name").notNull(),
+    betType: text("bet_type").notNull(), // 'winner', 'declareOut', 'confidence', 'sidebet'
+    targetUserId: varchar("target_user_id").references(() => users.id), // Who they're betting on (if applicable)
+    targetPlayerName: text("target_player_name"), // Name of player being bet on
+    chipAmount: integer("chip_amount").notNull(),
+    payout: integer("payout").notNull().default(0), // Chips won/lost
+    status: text("status").notNull().default('pending'), // 'pending', 'won', 'lost', 'void'
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    // Hot queries: settlement walks bets per game; user history walks bets per user.
+    gameIdx: index("virtual_bets_game_idx").on(table.gameId),
+    bettorIdx: index("virtual_bets_bettor_idx").on(table.bettorUserId),
+  }),
+);
 
 // Password reset tokens table
-export const passwordResetTokens = pgTable("password_reset_tokens", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  token: text("token").notNull().unique(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().references(() => users.id),
+    token: text("token").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("password_reset_tokens_user_idx").on(table.userId),
+    expiresIdx: index("password_reset_tokens_expires_idx").on(table.expiresAt),
+  }),
+);
 
 // Admin settings table (singleton - one row only)
 export const adminSettings = pgTable("admin_settings", {
@@ -131,6 +194,11 @@ export const insertPasswordResetTokenSchema = createInsertSchema(passwordResetTo
   createdAt: true,
 });
 
+export const insertEmailVerificationTokenSchema = createInsertSchema(emailVerificationTokens).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertVirtualBetSchema = createInsertSchema(virtualBets).omit({
   id: true,
   createdAt: true,
@@ -151,6 +219,8 @@ export type InsertGameParticipant = z.infer<typeof insertGameParticipantSchema>;
 export type GameParticipant = typeof gameParticipants.$inferSelect;
 export type InsertPasswordResetToken = z.infer<typeof insertPasswordResetTokenSchema>;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+export type InsertEmailVerificationToken = z.infer<typeof insertEmailVerificationTokenSchema>;
+export type EmailVerificationToken = typeof emailVerificationTokens.$inferSelect;
 export type InsertVirtualBet = z.infer<typeof insertVirtualBetSchema>;
 export type VirtualBet = typeof virtualBets.$inferSelect;
 export type InsertAdminSettings = z.infer<typeof insertAdminSettingsSchema>;
@@ -173,9 +243,19 @@ export interface PlayerState {
   bonePile: Card[];
   drawPile: Card[];
   currentDraw: Card[];
+  burnPile: Card[]; // Cards removed via voted-burn; penalised at round end like leftover bone cards
   cardBackImage?: string;
+  isAI?: boolean; // Engine-visible flag so AI players auto-vote yes on burn proposals
   score: number; // Running total score
   roundScore?: number; // Score for current round
+}
+
+export type BurnVote = 'yes' | 'no' | 'pending';
+
+export interface BurnProposal {
+  proposerId: string;
+  votes: Record<string, BurnVote>; // keyed by playerId; proposer + AIs always 'yes'
+  createdAt: number;
 }
 
 export interface FoundationPile {
@@ -196,9 +276,12 @@ export interface RoundResult {
   foundationCards: number; // Cards played to foundation
   bonePileRemaining: number;
   tableauRemaining: number;
+  burnedCards: number; // Cards removed via the burn mechanic this round
   declaredOut: boolean; // Did they declare out?
   roundScore: number;
   totalScore: number;
+  /** Persistent credits earned this game (only present on the final game-over state, only for authenticated players). */
+  creditsEarned?: number;
 }
 
 export interface ChatMessage {
@@ -218,5 +301,6 @@ export interface GameState {
   roundResults?: RoundResult[];
   winnerId?: string; // Player who won the game (reached target score)
   declaredOutId?: string; // Player who declared out this round
+  burnProposal?: BurnProposal; // Active vote-burn proposal, if any
   chatMessages?: ChatMessage[];
 }

@@ -1,21 +1,56 @@
 // From blueprint: javascript_auth_all_persistance
-import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type GameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings } from "@shared/schema";
-import { users, userProfiles, games, gameParticipants, passwordResetTokens, virtualBets, adminSettings } from "@shared/schema";
+import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type GameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings } from "@shared/schema";
+import { users, userProfiles, games, gameParticipants, passwordResetTokens, emailVerificationTokens, virtualBets, adminSettings } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import connectPg from "connect-pg-simple";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, desc, count, avg } from "drizzle-orm";
 
 const MemoryStore = createMemoryStore(session);
 const PostgresSessionStore = connectPg(session);
+
+/** Mirror of the credit constants in gameSocket.ts — used when computing history summaries. */
+const PLACEMENT_CREDITS: Record<number, number> = { 1: 100, 2: 25, 3: 10 };
+const DECLARE_OUT_BONUS = 25;
+function placementToCredits(placement: number | null, declaredOut: boolean): number {
+  if (!placement) return 0;
+  return (PLACEMENT_CREDITS[placement] ?? 0) + (declaredOut ? DECLARE_OUT_BONUS : 0);
+}
+
+/** Shaped return type for a user's game history list. */
+export interface UserGameSummary {
+  gameId: string;
+  scoringMethod: string;
+  targetScore: number;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  placement: number | null;
+  score: number | null;
+  playerName: string;
+  declaredOut: boolean;
+  totalPlayers: number;
+  earnedCredits: number; // credits granted for this game (derived from placement)
+}
+
+/** One row in the global leaderboard. */
+export interface LeaderboardEntry {
+  userId: string;
+  displayName: string;
+  gamesPlayed: number;
+  wins: number;
+  winPct: number;      // 0–100
+  avgPlacement: number; // lower is better
+  earnedCredits: number;
+}
 
 export interface IStorage {
   // User management
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser, displayName?: string): Promise<User>;
   updateUserStripeInfo(userId: string, stripeCustomerId: string, stripeSubscriptionId: string): Promise<User>;
   updateUserTier(userId: string, tier: string): Promise<User>;
@@ -30,17 +65,26 @@ export interface IStorage {
   updateGame(id: string, updates: { winnerId?: string | null; startedAt?: Date | null; finishedAt?: Date | null }): Promise<Game>;
   addGameParticipant(participant: any): Promise<GameParticipant>;
   getGameParticipants(gameId: string): Promise<GameParticipant[]>;
-  getUserGames(userId: string): Promise<any[]>;
+  getUserGames(userId: string): Promise<UserGameSummary[]>;
+  getLeaderboard(limit?: number): Promise<LeaderboardEntry[]>;
   
   // Password reset
   createPasswordResetToken(token: InsertPasswordResetToken): Promise<PasswordResetToken>;
   getPasswordResetToken(token: string): Promise<PasswordResetToken | undefined>;
   deletePasswordResetToken(token: string): Promise<void>;
   updateUserPassword(userId: string, hashedPassword: string): Promise<User>;
+
+  // Email verification
+  createEmailVerificationToken(token: InsertEmailVerificationToken): Promise<EmailVerificationToken>;
+  getEmailVerificationToken(token: string): Promise<EmailVerificationToken | undefined>;
+  deleteEmailVerificationToken(token: string): Promise<void>;
+  markEmailVerified(userId: string): Promise<User>;
   
   // Virtual betting (entertainment only - no real-world value)
   getUserChipBalance(userId: string): Promise<number>;
   resetDailyChips(userId: string): Promise<UserProfile>;
+  /** Atomically increment a user's persistent earned_credits. */
+  grantCredits(userId: string, amount: number): Promise<UserProfile>;
   placeBet(bet: InsertVirtualBet): Promise<VirtualBet>;
   updateBetStatus(betId: string, status: 'won' | 'lost' | 'void', payout: number): Promise<VirtualBet>;
   getUserBets(userId: string, limit?: number): Promise<VirtualBet[]>;
@@ -69,6 +113,12 @@ export class DatabaseStorage implements IStorage {
 
   async getUserByUsername(username: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    // Case-insensitive match — email addresses are not case-sensitive.
+    const [user] = await db.select().from(users).where(sql`lower(${users.email}) = lower(${email})`);
     return user || undefined;
   }
 
@@ -156,17 +206,76 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(gameParticipants).where(eq(gameParticipants.gameId, gameId));
   }
 
-  async getUserGames(userId: string): Promise<any[]> {
-    const userGames = await db
+  async getUserGames(userId: string): Promise<UserGameSummary[]> {
+    // Count total players per game in a subquery
+    const playerCounts = db
       .select({
-        game: games,
-        participant: gameParticipants,
+        gameId: gameParticipants.gameId,
+        total: count(gameParticipants.id).as('total'),
       })
       .from(gameParticipants)
-      .leftJoin(games, eq(gameParticipants.gameId, games.id))
-      .where(eq(gameParticipants.userId, userId));
-    
-    return userGames;
+      .groupBy(gameParticipants.gameId)
+      .as('player_counts');
+
+    const rows = await db
+      .select({
+        gameId: games.id,
+        scoringMethod: games.scoringMethod,
+        targetScore: games.targetScore,
+        startedAt: games.startedAt,
+        finishedAt: games.finishedAt,
+        placement: gameParticipants.placement,
+        score: gameParticipants.score,
+        playerName: gameParticipants.playerName,
+        declaredOut: gameParticipants.declaredOut,
+        totalPlayers: playerCounts.total,
+      })
+      .from(gameParticipants)
+      .innerJoin(games, eq(gameParticipants.gameId, games.id))
+      .leftJoin(playerCounts, eq(games.id, playerCounts.gameId))
+      .where(eq(gameParticipants.userId, userId))
+      .orderBy(desc(games.finishedAt));
+
+    return rows.map((r) => ({
+      ...r,
+      totalPlayers: Number(r.totalPlayers ?? 0),
+      earnedCredits: placementToCredits(r.placement, r.declaredOut),
+    }));
+  }
+
+  async getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
+    const rows = await db
+      .select({
+        userId: gameParticipants.userId,
+        displayName: userProfiles.displayName,
+        gamesPlayed: count(gameParticipants.id),
+        wins: sql<number>`sum(case when ${gameParticipants.placement} = 1 then 1 else 0 end)`,
+        avgPlacement: avg(gameParticipants.placement),
+        earnedCredits: userProfiles.earnedCredits,
+      })
+      .from(gameParticipants)
+      .innerJoin(userProfiles, eq(gameParticipants.userId, userProfiles.userId))
+      .where(sql`${gameParticipants.userId} is not null`)
+      .groupBy(gameParticipants.userId, userProfiles.displayName, userProfiles.earnedCredits)
+      .orderBy(
+        desc(sql`sum(case when ${gameParticipants.placement} = 1 then 1 else 0 end)`),
+        avg(gameParticipants.placement),
+      )
+      .limit(limit);
+
+    return rows.map((r) => {
+      const wins = Number(r.wins ?? 0);
+      const gamesPlayed = Number(r.gamesPlayed ?? 0);
+      return {
+        userId: r.userId!,
+        displayName: r.displayName ?? 'Unknown',
+        gamesPlayed,
+        wins,
+        winPct: gamesPlayed > 0 ? Math.round((wins / gamesPlayed) * 100) : 0,
+        avgPlacement: r.avgPlacement ? Math.round(Number(r.avgPlacement) * 10) / 10 : 0,
+        earnedCredits: r.earnedCredits ?? 0,
+      };
+    });
   }
 
   async createPasswordResetToken(token: InsertPasswordResetToken): Promise<PasswordResetToken> {
@@ -187,6 +296,29 @@ export class DatabaseStorage implements IStorage {
     const [user] = await db
       .update(users)
       .set({ password: hashedPassword })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async createEmailVerificationToken(token: InsertEmailVerificationToken): Promise<EmailVerificationToken> {
+    const [newToken] = await db.insert(emailVerificationTokens).values(token).returning();
+    return newToken;
+  }
+
+  async getEmailVerificationToken(token: string): Promise<EmailVerificationToken | undefined> {
+    const [row] = await db.select().from(emailVerificationTokens).where(eq(emailVerificationTokens.token, token));
+    return row || undefined;
+  }
+
+  async deleteEmailVerificationToken(token: string): Promise<void> {
+    await db.delete(emailVerificationTokens).where(eq(emailVerificationTokens.token, token));
+  }
+
+  async markEmailVerified(userId: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ emailVerified: true })
       .where(eq(users.id, userId))
       .returning();
     return user;
@@ -219,7 +351,7 @@ export class DatabaseStorage implements IStorage {
   async resetDailyChips(userId: string): Promise<UserProfile> {
     const [profile] = await db
       .update(userProfiles)
-      .set({ 
+      .set({
         virtualChips: 1000,
         lastChipReset: new Date()
       })
@@ -228,20 +360,36 @@ export class DatabaseStorage implements IStorage {
     return profile;
   }
 
+  async grantCredits(userId: string, amount: number): Promise<UserProfile> {
+    // SQL increment so concurrent grants compose correctly without a read-modify-write race.
+    const [profile] = await db
+      .update(userProfiles)
+      .set({ earnedCredits: sql`${userProfiles.earnedCredits} + ${amount}` })
+      .where(eq(userProfiles.userId, userId))
+      .returning();
+    return profile;
+  }
+
   async placeBet(bet: InsertVirtualBet): Promise<VirtualBet> {
-    // Deduct chips from user balance
-    const profile = await this.getUserProfile(bet.bettorUserId!);
-    if (!profile) throw new Error('User profile not found');
-    if (profile.virtualChips < bet.chipAmount) {
-      throw new Error('Insufficient chips');
-    }
-    
-    // Deduct chips
-    await this.updateUserChips(bet.bettorUserId!, profile.virtualChips - bet.chipAmount);
-    
-    // Create bet record
-    const [newBet] = await db.insert(virtualBets).values(bet).returning();
-    return newBet;
+    // Atomic: deduct chips + insert bet row in one transaction. If anything
+    // throws (FK violation, missing profile, anything) the rollback restores
+    // the chip balance — otherwise a failed insert would orphan the deduction.
+    return db.transaction(async (tx) => {
+      const [profile] = await tx
+        .select()
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, bet.bettorUserId!));
+      if (!profile) throw new Error('User profile not found');
+      if (profile.virtualChips < bet.chipAmount) {
+        throw new Error('Insufficient chips');
+      }
+      await tx
+        .update(userProfiles)
+        .set({ virtualChips: profile.virtualChips - bet.chipAmount })
+        .where(eq(userProfiles.userId, bet.bettorUserId!));
+      const [newBet] = await tx.insert(virtualBets).values(bet).returning();
+      return newBet;
+    });
   }
 
   async updateBetStatus(betId: string, status: 'won' | 'lost' | 'void', payout: number): Promise<VirtualBet> {

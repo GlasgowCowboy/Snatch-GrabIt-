@@ -4,12 +4,12 @@ import { setupVite, serveStatic, log } from "./vite";
 import { gameSocket } from "./gameSocket";
 
 const app = express();
-// Card-back image uploads are base64-encoded inline in JSON bodies (lobby allows
-// up to 5MB images, which expand ~33% as base64). The default 100kB limit chokes
-// on any meaningful upload — keep parity with that 5MB cap plus comfortable
-// overhead.
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: false, limit: '10mb' }));
+// Card-back image uploads are base64-encoded inline in JSON bodies. The client
+// caps them at 1 MB; we accept up to 2 MB on the wire (1 MB × ~1.33 base64
+// overhead + JSON envelope + headroom). Any larger request is almost certainly
+// abusive and we'd rather fail the request than buffer it.
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: false, limit: '2mb' }));
 
 app.use((req, res, next) => {
   const start = Date.now();

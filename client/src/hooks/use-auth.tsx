@@ -44,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onError: (error: Error) => {
       toast({
-        title: "Login failed",
+        title: "Couldn't log in",
         description: error.message,
         variant: "destructive",
       });
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onError: (error: Error) => {
       toast({
-        title: "Registration failed",
+        title: "Couldn't register",
         description: error.message,
         variant: "destructive",
       });
@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onError: (error: Error) => {
       toast({
-        title: "Logout failed",
+        title: "Couldn't log out",
         description: error.message,
         variant: "destructive",
       });

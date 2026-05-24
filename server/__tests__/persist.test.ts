@@ -13,9 +13,9 @@ function makeGameOverState(): GameState {
     scoringSettings: { method: 'fullHand', targetScore: 50 },
     foundations: [],
     players: [
-      { id: 'p1', name: 'Alice', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], score: 50 },
-      { id: 'p2', name: 'Bob', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], score: 30 },
-      { id: 'p3', name: 'Carol', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], score: 10 },
+      { id: 'p1', name: 'Alice', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], burnPile: [], score: 50 },
+      { id: 'p2', name: 'Bob', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], burnPile: [], score: 30 },
+      { id: 'p3', name: 'Carol', tableau: [[], [], [], []], bonePile: [], drawPile: [], currentDraw: [], burnPile: [], score: 10 },
     ],
   };
 }
@@ -69,6 +69,27 @@ describe('finalizeFinishedGame', () => {
       .filter((p) => p.gameId === initial.id)
       .sort((a, b) => (a.placement ?? 0) - (b.placement ?? 0));
     expect(participants.map((p) => p.userId)).toEqual(['user-alice', null, 'user-carol']);
+  });
+
+  it('grants earned credits per placement + declare-out, skipping non-auth players', async () => {
+    // Real users with profiles — credits land in their persistent balance.
+    const alice = await storage.createUser({ username: 'alice-credits-' + Date.now(), password: 'x', email: null }, 'Alice');
+    const carol = await storage.createUser({ username: 'carol-credits-' + Date.now(), password: 'x', email: null }, 'Carol');
+    const initial = await storage.createGame({ scoringMethod: 'fullHand', targetScore: 50 });
+    const state = makeGameOverState(); // p1 (Alice) wins + declares out, p3 (Carol) 3rd, p2 anonymous
+    const userIdMap = new Map<string, string | null>([
+      ['p1', alice.id],
+      ['p2', null],          // guest / AI — no grant
+      ['p3', carol.id],
+    ]);
+    await finalizeFinishedGame(initial.id, state, userIdMap);
+
+    const aliceProfile = (await storage.getUserProfile(alice.id))!;
+    const carolProfile = (await storage.getUserProfile(carol.id))!;
+    // Alice: 100 (1st) + 25 (declared out) = 125
+    expect(aliceProfile.earnedCredits).toBe(125);
+    // Carol: 10 (3rd) + 0 (didn't declare) = 10
+    expect(carolProfile.earnedCredits).toBe(10);
   });
 });
 

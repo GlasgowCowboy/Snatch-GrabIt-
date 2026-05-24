@@ -10,7 +10,12 @@ import ScoreboardTicker from './ScoreboardTicker';
 import AccountDropdown from './AccountDropdown';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Trophy, LogOut, MessageSquare, Wifi, WifiOff } from 'lucide-react';
+import { Trophy, LogOut, MessageSquare, Wifi, WifiOff, Flame } from 'lucide-react';
+import BurnVoteModal from './BurnVoteModal';
+import Logo from './Logo';
+import CreditBadge from './CreditBadge';
+import ChipsBadge from './ChipsBadge';
+import SponsorBadge from './SponsorBadge';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
 import { getQueryFn } from '@/lib/queryClient';
@@ -26,6 +31,7 @@ interface GameBoardInteractiveProps {
   sendChat: (message: string) => void;
   sendNextRound: () => void;
   onLeaveGame?: () => void;
+  gameDbId?: string;
 }
 
 export default function GameBoardInteractive({
@@ -36,6 +42,7 @@ export default function GameBoardInteractive({
   sendChat,
   sendNextRound,
   onLeaveGame,
+  gameDbId,
 }: GameBoardInteractiveProps) {
   const { toast } = useToast();
 
@@ -57,6 +64,10 @@ export default function GameBoardInteractive({
   const otherPlayers = effectiveState.players.filter((p) => p.id !== currentPlayerId);
   const winner = effectiveState.players.find((p) => p.id === effectiveState.winnerId);
   const canDeclareOut = currentPlayer?.bonePile.length === 0 && effectiveState.status === 'playing';
+  const canProposeBurn =
+    effectiveState.status === 'playing' &&
+    !effectiveState.burnProposal &&
+    (currentPlayer?.bonePile.length ?? 0) > 0;
 
   useEffect(() => {
     if (showTutorial && effectiveState.status === 'playing') {
@@ -347,6 +358,14 @@ export default function GameBoardInteractive({
 
   return (
     <div className="min-h-screen felt-bg p-4">
+      {effectiveState.burnProposal && (
+        <BurnVoteModal
+          proposal={effectiveState.burnProposal}
+          state={effectiveState}
+          currentPlayerId={currentPlayerId}
+          onVote={(vote) => sendMove({ type: 'vote-burn', vote })}
+        />
+      )}
       {ghostCard && mouse && (
         <div
           className="fixed pointer-events-none z-[9998] opacity-90"
@@ -369,6 +388,7 @@ export default function GameBoardInteractive({
           onNextRound={handleNextRound}
           gameOver={effectiveState.status === 'gameOver'}
           winnerId={effectiveState.winnerId}
+          gameDbId={gameDbId}
         />
       )}
       <div className="max-w-7xl mx-auto space-y-4">
@@ -379,7 +399,9 @@ export default function GameBoardInteractive({
 
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 glass rounded-xl p-3">
           <div className="flex items-center gap-2 flex-wrap">
+            <Logo size={26} className="text-gold" />
             <h1 className="text-xl md:text-2xl font-bold text-gradient-gold">Snatch&GrabIt!</h1>
+            <SponsorBadge />
             {winner && (
               <Badge variant="default" className="flex items-center gap-2">
                 <Trophy className="w-4 h-4" />
@@ -413,11 +435,26 @@ export default function GameBoardInteractive({
                 )}
               </Badge>
             )}
+            <ChipsBadge />
+            <CreditBadge />
             <AccountDropdown />
             {canDeclareOut && (
               <Button size="sm" onClick={handleDeclareOut} data-testid="button-declare-out" className="btn-gold">
                 <Trophy className="w-4 h-4 mr-2" />
                 Declare Out!
+              </Button>
+            )}
+            {canProposeBurn && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => sendMove({ type: 'propose-burn' })}
+                data-testid="button-propose-burn"
+                className="border-orange-500/40 text-orange-300 hover:bg-orange-500/10"
+                title="Propose burning your top bone-pile card. Requires unanimous vote."
+              >
+                <Flame className="w-4 h-4 mr-2" />
+                Burn
               </Button>
             )}
             <Button
@@ -433,54 +470,71 @@ export default function GameBoardInteractive({
           </div>
         </div>
 
-        <FoundationArea
-          foundations={effectiveState.foundations}
-          onFoundationClick={handleFoundationClick}
-          onFoundationAreaClick={handleFoundationAreaClick}
-          showMoveHint={selectedCard !== null}
-        />
+        {/* Two-column layout at lg+: game on the left, chat as a sticky side panel
+            on the right. Below lg the chat drops underneath the player area in
+            natural document flow so mobile users get the full board width. */}
+        <div className="lg:flex lg:gap-4 lg:items-start">
+          {/* Game column */}
+          <div className="flex-1 min-w-0 space-y-4">
+            <FoundationArea
+              foundations={effectiveState.foundations}
+              onFoundationClick={handleFoundationClick}
+              onFoundationAreaClick={handleFoundationAreaClick}
+              showMoveHint={selectedCard !== null}
+            />
 
-        {currentPlayer && (
-          <PlayerArea
-            player={currentPlayer}
-            isCurrentPlayer
-            bonePilePosition={(profile?.bonePilePosition as 'left' | 'right') || 'left'}
-            selectedCard={selectedCard}
-            onBonePileClick={handleBonePileClick}
-            onTableauCardClick={handleTableauCardClick}
-            onTableauColumnClick={handleTableauClick}
-            onDrawCardClick={handleDrawCardClick}
-            onDrawPileClick={handleDrawPileClick}
-          />
-        )}
-
-        {currentPlayer && (
-          <div className="space-y-2">
-            <h2 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" />
-              Chat
-            </h2>
-            <div className="border rounded-lg p-4 h-[350px]" data-testid="chat-container">
-              <GameChat
-                messages={effectiveState.chatMessages || []}
-                currentPlayerId={currentPlayerId}
-                currentPlayerName={currentPlayer?.name || 'Unknown'}
-                onSendMessage={handleSendMessage}
+            {currentPlayer && (
+              <PlayerArea
+                player={currentPlayer}
+                isCurrentPlayer
+                bonePilePosition={(profile?.bonePilePosition as 'left' | 'right') || 'left'}
+                selectedCard={selectedCard}
+                onBonePileClick={handleBonePileClick}
+                onTableauCardClick={handleTableauCardClick}
+                onTableauColumnClick={handleTableauClick}
+                onDrawCardClick={handleDrawCardClick}
+                onDrawPileClick={handleDrawPileClick}
               />
-            </div>
-          </div>
-        )}
+            )}
 
-        {otherPlayers.length > 0 && (
-          <div className="space-y-2">
-            <h2 className="text-sm font-semibold text-muted-foreground">Other Players</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {otherPlayers.map((player) => (
-                <PlayerArea key={player.id} player={player} />
-              ))}
-            </div>
+            {otherPlayers.length > 0 && (
+              <div className="space-y-2">
+                <h2 className="text-sm font-semibold text-muted-foreground">Other Players</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {otherPlayers.map((player) => (
+                    <PlayerArea key={player.id} player={player} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Chat side rail (sticky on lg+, stacks naturally below on smaller widths) */}
+          {currentPlayer && (
+            <aside
+              className="mt-4 lg:mt-0 lg:w-[340px] lg:shrink-0 lg:sticky lg:top-4 lg:self-start"
+              data-testid="chat-side-rail"
+            >
+              <div className="space-y-2">
+                <h2 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4" />
+                  Chat
+                </h2>
+                <div
+                  className="glass border border-gold/10 rounded-lg p-4 h-[350px] lg:h-[calc(100vh-8rem)] lg:max-h-[640px]"
+                  data-testid="chat-container"
+                >
+                  <GameChat
+                    messages={effectiveState.chatMessages || []}
+                    currentPlayerId={currentPlayerId}
+                    currentPlayerName={currentPlayer?.name || 'Unknown'}
+                    onSendMessage={handleSendMessage}
+                  />
+                </div>
+              </div>
+            </aside>
+          )}
+        </div>
       </div>
     </div>
   );
