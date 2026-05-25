@@ -1,108 +1,120 @@
 import { describe, it, expect } from 'vitest';
 import { createInitialGameState, executeMove } from '../gameEngine';
-import type { GameState } from '../schema';
+import type { Card, GameState } from '../schema';
 
-function freshState(extras: { isAI?: boolean }[] = [{}, {}]): GameState {
-  const players = extras.map((p, i) => ({
-    id: `p${i + 1}`,
-    name: `P${i + 1}`,
-    isAI: p.isAI,
-  }));
-  return createInitialGameState(players, { method: 'fullHand', targetScore: 50 });
+function makeCard(suit: Card['suit'], rank: Card['rank']): Card {
+  return { suit, rank, id: `t-${suit}-${rank}-${Math.random()}` };
 }
 
-describe('burn vote', () => {
-  it('solo-vs-AI: propose-burn resolves immediately because AI auto-yes', () => {
-    const state = freshState([{}, { isAI: true }]);
-    const before = state.players[0].bonePile.length;
+function freshState(): GameState {
+  return createInitialGameState(
+    [
+      { id: 'p1', name: 'P1' },
+      { id: 'p2', name: 'P2' },
+    ],
+    { method: 'fullHand', targetScore: 50 },
+  );
+}
 
-    const result = executeMove(state, 'p1', { type: 'propose-burn' });
-    expect(result.error).toBeUndefined();
+describe('burn-draw-card', () => {
+  it('moves the selected currentDraw card to the bottom of the draw pile', () => {
+    const state = freshState();
+    const player = state.players.find((p) => p.id === 'p1')!;
+    // Deterministic setup: 4-card draw pile, 2 face-up cards.
+    const A = makeCard('hearts', 'A');
+    const B = makeCard('spades', '2');
+    const C = makeCard('diamonds', '3');
+    const D = makeCard('clubs', '4');
+    const Burn = makeCard('hearts', '7');
+    const Other = makeCard('spades', '8');
+    // drawPile is drawn from the end (top of pile). Top is D.
+    player.drawPile = [A, B, C, D];
+    player.currentDraw = [Other, Burn];
 
-    // Proposal already resolved → cleared from state, top of bonePile moved to burnPile
-    expect(result.newState.burnProposal).toBeUndefined();
-    const proposer = result.newState.players.find((p) => p.id === 'p1')!;
-    expect(proposer.bonePile.length).toBe(before - 1);
-    expect(proposer.burnPile.length).toBe(1);
+    const r = executeMove(state, 'p1', { type: 'burn-draw-card', drawCardIndex: 1 });
+    expect(r.error).toBeUndefined();
+
+    const p = r.newState.players.find((p) => p.id === 'p1')!;
+    // Burned card removed from currentDraw
+    expect(p.currentDraw.map((c) => c.rank)).toEqual(['8']);
+    // Bottom-of-pile (index 0) is now the burned card.
+    expect(p.drawPile[0].rank).toBe('7');
+    // Next-up card (D, the previous top) was also shifted to the bottom — at
+    // index 1 — so the next flip-3 reveals A/B/C instead of B/C/D.
+    expect(p.drawPile[1].rank).toBe('4');
+    // The new top of the pile is C (one step deeper than before).
+    expect(p.drawPile[p.drawPile.length - 1].rank).toBe('3');
+    // Total length preserved overall: -1 from currentDraw, +1 to drawPile (the
+    // burned card); the "skipped" card just moved within drawPile.
+    expect(p.drawPile.length).toBe(5);
   });
 
-  it('multi-human: proposal stays pending until other human votes', () => {
-    const state = freshState([{}, {}]);
-    const r1 = executeMove(state, 'p1', { type: 'propose-burn' });
-    expect(r1.error).toBeUndefined();
-    expect(r1.newState.burnProposal).toBeDefined();
-    expect(r1.newState.burnProposal!.votes).toEqual({ p1: 'yes', p2: 'pending' });
-    // Bone pile is unchanged until the vote resolves
-    expect(r1.newState.players[0].bonePile.length).toBe(state.players[0].bonePile.length);
+  it('rejects burn with an invalid draw card index', () => {
+    const state = freshState();
+    const player = state.players.find((p) => p.id === 'p1')!;
+    player.currentDraw = [makeCard('hearts', '5')];
+
+    const tooHigh = executeMove(state, 'p1', { type: 'burn-draw-card', drawCardIndex: 3 });
+    expect(tooHigh.error).toMatch(/invalid draw card index/i);
+
+    const negative = executeMove(state, 'p1', { type: 'burn-draw-card', drawCardIndex: -1 });
+    expect(negative.error).toMatch(/invalid draw card index/i);
   });
 
-  it('multi-human: second human voting "yes" executes the burn', () => {
-    const state = freshState([{}, {}]);
-    const r1 = executeMove(state, 'p1', { type: 'propose-burn' });
-    const r2 = executeMove(r1.newState, 'p2', { type: 'vote-burn', vote: 'yes' });
-    expect(r2.error).toBeUndefined();
-    expect(r2.newState.burnProposal).toBeUndefined();
-    const proposer = r2.newState.players.find((p) => p.id === 'p1')!;
-    expect(proposer.burnPile.length).toBe(1);
-  });
+  it('falls back to a simple move when the draw pile is empty (no skip-next)', () => {
+    const state = freshState();
+    const player = state.players.find((p) => p.id === 'p1')!;
+    const Burn = makeCard('clubs', 'Q');
+    player.drawPile = [];
+    player.currentDraw = [Burn, makeCard('hearts', '9')];
 
-  it('multi-human: second human voting "no" cancels without burning', () => {
-    const state = freshState([{}, {}]);
-    const before = state.players[0].bonePile.length;
-    const r1 = executeMove(state, 'p1', { type: 'propose-burn' });
-    const r2 = executeMove(r1.newState, 'p2', { type: 'vote-burn', vote: 'no' });
-    expect(r2.error).toBeUndefined();
-    expect(r2.newState.burnProposal).toBeUndefined();
-    const proposer = r2.newState.players.find((p) => p.id === 'p1')!;
-    expect(proposer.burnPile.length).toBe(0);
-    expect(proposer.bonePile.length).toBe(before); // untouched
-  });
+    const r = executeMove(state, 'p1', { type: 'burn-draw-card', drawCardIndex: 0 });
+    expect(r.error).toBeUndefined();
 
-  it('rejects propose-burn when bone pile is empty', () => {
-    const state = freshState([{}, { isAI: true }]);
-    state.players[0].bonePile = [];
-    const r = executeMove(state, 'p1', { type: 'propose-burn' });
-    expect(r.error).toMatch(/no cards left/i);
+    const p = r.newState.players.find((p) => p.id === 'p1')!;
+    expect(p.currentDraw.map((c) => c.rank)).toEqual(['9']);
+    expect(p.drawPile.map((c) => c.rank)).toEqual(['Q']);
   });
+});
 
-  it('rejects propose-burn while a vote is already in progress', () => {
-    const state = freshState([{}, {}]);
-    const r1 = executeMove(state, 'p1', { type: 'propose-burn' });
-    const r2 = executeMove(r1.newState, 'p1', { type: 'propose-burn' });
-    expect(r2.error).toMatch(/already in progress/i);
-  });
+describe('draw pile cycle preserves dealt order', () => {
+  it('refills without reversing — same flip-3 order on every cycle', () => {
+    const state = freshState();
+    const player = state.players.find((p) => p.id === 'p1')!;
+    // Tiny deterministic deck so we can verify the cycle.
+    const a = makeCard('hearts', '2');
+    const b = makeCard('hearts', '3');
+    const c = makeCard('hearts', '4');
+    const d = makeCard('hearts', '5');
+    const e = makeCard('hearts', '6');
+    const f = makeCard('hearts', '7');
+    player.drawPile = [a, b, c, d, e, f];
+    player.currentDraw = [];
 
-  it('rejects vote-burn with no active proposal', () => {
-    const state = freshState([{}, {}]);
-    const r = executeMove(state, 'p2', { type: 'vote-burn', vote: 'yes' });
-    expect(r.error).toMatch(/no burn vote/i);
-  });
-
-  it('rejects double-vote from the same player', () => {
-    const state = freshState([{}, {}, {}]);
-    const r1 = executeMove(state, 'p1', { type: 'propose-burn' });
-    const r2 = executeMove(r1.newState, 'p2', { type: 'vote-burn', vote: 'yes' });
-    // p3 still pending; p2 voting again should be rejected
-    const r3 = executeMove(r2.newState, 'p2', { type: 'vote-burn', vote: 'no' });
-    expect(r3.error).toMatch(/already voted/i);
-  });
-
-  it('burned cards count as -2 in fullHand scoring', () => {
-    const state = freshState([{}, { isAI: true }]);
-    // Burn one card via the solo-vs-AI fast path
-    const r1 = executeMove(state, 'p1', { type: 'propose-burn' });
-    // Empty p1's bone pile so they can declare out, and zero out tableau / draw
-    // pile too so the score isolates the burn penalty.
+    // First flip-3: takes [d, e, f] off the end.
+    const r1 = executeMove(state, 'p1', { type: 'draw-pile' });
     const p1 = r1.newState.players.find((p) => p.id === 'p1')!;
-    p1.bonePile = [];
-    p1.tableau = [[], [], [], []];
-    p1.drawPile = [];
-    p1.currentDraw = [];
-    const r2 = executeMove(r1.newState, 'p1', { type: 'declare-out' });
-    expect(r2.error).toBeUndefined();
-    const result = r2.newState.roundResults!.find((r) => r.playerId === 'p1')!;
-    // foundationCards 0 - bonePile 0 - burnPile(1)*2 + declareOut bonus 5 = +3
-    expect(result.burnedCards).toBe(1);
-    expect(result.roundScore).toBe(3);
+    expect(p1.currentDraw.map((c) => c.rank)).toEqual(['5', '6', '7']);
+    expect(p1.drawPile.map((c) => c.rank)).toEqual(['2', '3', '4']);
+
+    // Second flip-3: empties the pile.
+    const r2 = executeMove(r1.newState, 'p1', { type: 'draw-pile' });
+    const p2 = r2.newState.players.find((p) => p.id === 'p1')!;
+    expect(p2.currentDraw.map((c) => c.rank)).toEqual(['5', '6', '7', '2', '3', '4']);
+    expect(p2.drawPile).toEqual([]);
+
+    // Refill cycle: drawPile = [...currentDraw] (no reverse). currentDraw
+    // is cleared; drawPile carries the same dealt order through the cycle.
+    const r3 = executeMove(r2.newState, 'p1', { type: 'draw-pile' });
+    const p3 = r3.newState.players.find((p) => p.id === 'p1')!;
+    expect(p3.drawPile.map((c) => c.rank)).toEqual(['5', '6', '7', '2', '3', '4']);
+    expect(p3.currentDraw).toEqual([]);
+
+    // Next flip-3 after the refill: splice from the end again — same chunk
+    // we drew on the very first flip in the previous cycle (preserved order).
+    const r4 = executeMove(r3.newState, 'p1', { type: 'draw-pile' });
+    const p4 = r4.newState.players.find((p) => p.id === 'p1')!;
+    expect(p4.currentDraw.map((c) => c.rank)).toEqual(['2', '3', '4']);
+    expect(p4.drawPile.map((c) => c.rank)).toEqual(['5', '6', '7']);
   });
 });

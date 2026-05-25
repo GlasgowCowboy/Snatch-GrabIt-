@@ -1,4 +1,4 @@
-import type { Card, Rank, GameState, PlayerState, RoundResult, ScoringSettings, BurnVote } from './schema';
+import type { Card, Rank, GameState, PlayerState, RoundResult, ScoringSettings } from './schema';
 import { generateDeck, dealCards, NEW_FOUNDATION_INDEX, RANKS } from './deckUtils';
 // Re-export for callers (engine is the public surface for game logic).
 export { NEW_FOUNDATION_INDEX, RANKS } from './deckUtils';
@@ -14,8 +14,9 @@ export type GameMove =
   | { type: 'draw-to-tableau'; drawCardIndex: number; targetColumn: number }
   | { type: 'draw-pile' }
   | { type: 'declare-out' }
-  | { type: 'propose-burn' }
-  | { type: 'vote-burn'; vote: 'yes' | 'no' };
+  // Unstick action: take a card from currentDraw and put it back at the bottom
+  // of the draw pile. Changes what the next flip-3 reveals. No vote, no penalty.
+  | { type: 'burn-draw-card'; drawCardIndex: number };
 
 export interface MoveResult {
   newState: GameState;
@@ -31,8 +32,6 @@ export const DRAW_TURN_COUNT = 3;
 export const DECLARE_OUT_SCORE_BONUS = 5;
 /** fullHand: each leftover bone-pile card costs this many points. */
 export const BONE_PILE_PENALTY = 2;
-/** fullHand: burned cards are penalised the same as leftover bone-pile cards. */
-export const BURNED_CARD_PENALTY = 2;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -84,7 +83,6 @@ export function createInitialGameState(
         cardBackImage: p.cardBackImage,
         isAI: p.isAI ?? false,
         score: 0,
-        burnPile: [],
         ...cards,
       };
     }),
@@ -132,11 +130,8 @@ export function executeMove(state: GameState, playerId: string, move: GameMove):
     case 'draw-pile':
       return executeDrawPile(newState, player);
 
-    case 'propose-burn':
-      return executeProposeBurn(newState, player);
-
-    case 'vote-burn':
-      return executeVoteBurn(newState, player, move.vote);
+    case 'burn-draw-card':
+      return executeBurnDrawCard(newState, player, move.drawCardIndex);
 
     default:
       return { newState: state, error: 'Unknown move type' };
@@ -361,7 +356,9 @@ function executeDrawPile(state: GameState, player: PlayerState): MoveResult {
     const cardsToTurn = player.drawPile.splice(-numToDraw);
     player.currentDraw.push(...cardsToTurn);
   } else if (player.currentDraw.length > 0) {
-    player.drawPile = [...player.currentDraw].reverse();
+    // Refill without reversing: preserves the dealt order across cycles so the
+    // pile rotates predictably rather than re-shuffling every lap.
+    player.drawPile = [...player.currentDraw];
     player.currentDraw = [];
   } else {
     return { newState: state, error: 'No cards to draw' };
@@ -369,63 +366,29 @@ function executeDrawPile(state: GameState, player: PlayerState): MoveResult {
   return { newState: state };
 }
 
-// ── Burn (voted unstick) ────────────────────────────────────────────────────
+// ── Burn (per-player unstick) ───────────────────────────────────────────────
 
-function resolveBurnIfReady(state: GameState): void {
-  if (!state.burnProposal) return;
-  const votes = Object.values(state.burnProposal.votes);
-  if (votes.some(v => v === 'no')) {
-    // Any "no" cancels the proposal.
-    state.burnProposal = undefined;
-    return;
+/**
+ * Burn the selected currentDraw card: it goes to the bottom of the drawPile,
+ * AND the very next card in the pile gets pushed down one step too. Net effect:
+ * the next flip-3 reveals cards from one step deeper, "unsticking" the player
+ * when their current 3 are unplayable. No vote, no penalty.
+ */
+function executeBurnDrawCard(state: GameState, player: PlayerState, drawCardIndex: number): MoveResult {
+  if (drawCardIndex < 0 || drawCardIndex >= player.currentDraw.length) {
+    return { newState: state, error: 'Invalid draw card index' };
   }
-  if (votes.every(v => v === 'yes')) {
-    // Unanimous → pop the proposer's bone-pile top into their burnPile.
-    const proposer = state.players.find(p => p.id === state.burnProposal!.proposerId);
-    if (proposer && proposer.bonePile.length > 0) {
-      const card = proposer.bonePile.pop()!;
-      proposer.burnPile.push(card);
-    }
-    state.burnProposal = undefined;
+  const [burned] = player.currentDraw.splice(drawCardIndex, 1);
+  // drawPile is drawn from the END (top of pile), so the "bottom" is index 0.
+  if (player.drawPile.length > 0) {
+    // Skip-next: move what would have come up next (drawPile top) to the
+    // bottom too. This is what makes the next flip-3 genuinely different.
+    const skipped = player.drawPile.pop()!;
+    player.drawPile.unshift(burned, skipped);
+  } else {
+    // Empty pile — burned card just becomes the only card (becomes the new top).
+    player.drawPile.push(burned);
   }
-}
-
-function executeProposeBurn(state: GameState, player: PlayerState): MoveResult {
-  if (state.burnProposal) {
-    return { newState: state, error: 'Another burn vote is already in progress' };
-  }
-  if (player.bonePile.length === 0) {
-    return { newState: state, error: 'No cards left to burn' };
-  }
-  const votes: Record<string, BurnVote> = {};
-  for (const p of state.players) {
-    if (p.id === player.id) votes[p.id] = 'yes'; // proposer implicitly agrees
-    else if (p.isAI) votes[p.id] = 'yes'; // AI auto-yes
-    else votes[p.id] = 'pending';
-  }
-  state.burnProposal = {
-    proposerId: player.id,
-    votes,
-    createdAt: Date.now(),
-  };
-  // If we are the only human (e.g. solo vs AI), the vote resolves immediately.
-  resolveBurnIfReady(state);
-  return { newState: state };
-}
-
-function executeVoteBurn(state: GameState, player: PlayerState, vote: 'yes' | 'no'): MoveResult {
-  const proposal = state.burnProposal;
-  if (!proposal) {
-    return { newState: state, error: 'No burn vote in progress' };
-  }
-  if (!(player.id in proposal.votes)) {
-    return { newState: state, error: 'You are not eligible to vote on this burn' };
-  }
-  if (proposal.votes[player.id] !== 'pending') {
-    return { newState: state, error: 'You have already voted on this burn' };
-  }
-  proposal.votes[player.id] = vote;
-  resolveBurnIfReady(state);
   return { newState: state };
 }
 
@@ -440,13 +403,10 @@ export function calculateRoundResults(state: GameState, declarerId: string): Rou
 
     const bonePileRemaining = player.bonePile.length;
     const tableauRemaining = player.tableau.reduce((sum, col) => sum + col.length, 0);
-    const burnedCards = player.burnPile.length;
 
     let roundScore = 0;
     if (state.scoringSettings.method === 'fullHand') {
-      // Burned cards penalised the same as unplayed bone-pile cards — the burn
-      // is a release valve, not a free pass.
-      roundScore = foundationCards - (bonePileRemaining * BONE_PILE_PENALTY) - (burnedCards * BURNED_CARD_PENALTY);
+      roundScore = foundationCards - (bonePileRemaining * BONE_PILE_PENALTY);
       if (player.id === declarerId) {
         roundScore += DECLARE_OUT_SCORE_BONUS;
       }
@@ -460,7 +420,6 @@ export function calculateRoundResults(state: GameState, declarerId: string): Rou
       foundationCards,
       bonePileRemaining,
       tableauRemaining,
-      burnedCards,
       declaredOut: player.id === declarerId,
       roundScore,
       totalScore: player.score + roundScore,
@@ -479,12 +438,9 @@ export function startNewRound(state: GameState): GameState {
     return {
       ...player,
       ...dealt,
-      burnPile: [],
       roundScore: 0,
     };
   });
-
-  newState.burnProposal = undefined;
 
   newState.foundations = [];
   newState.roundResults = undefined;

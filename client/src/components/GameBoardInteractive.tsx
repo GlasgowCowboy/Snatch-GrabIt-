@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Card, UserProfile } from '@shared/schema';
-import { GameMove } from '@shared/gameEngine';
+import { GameMove, NEW_FOUNDATION_INDEX } from '@shared/gameEngine';
 import PlayerArea from './PlayerArea';
 import PlayingCard from './PlayingCard';
 import FoundationArea from './FoundationArea';
@@ -12,7 +12,6 @@ import ThemeToggle from './ThemeToggle';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Trophy, LogOut, MessageSquare, Wifi, WifiOff, Flame } from 'lucide-react';
-import BurnVoteModal from './BurnVoteModal';
 import Logo from './Logo';
 import CreditBadge from './CreditBadge';
 import ChipsBadge from './ChipsBadge';
@@ -65,10 +64,13 @@ export default function GameBoardInteractive({
   const otherPlayers = effectiveState.players.filter((p) => p.id !== currentPlayerId);
   const winner = effectiveState.players.find((p) => p.id === effectiveState.winnerId);
   const canDeclareOut = currentPlayer?.bonePile.length === 0 && effectiveState.status === 'playing';
-  const canProposeBurn =
+  // New burn is per-player: enabled when a draw card is selected (that's the
+  // card you're choosing to push to the bottom of the pile to unstick the flip).
+  const canBurnSelectedDraw =
     effectiveState.status === 'playing' &&
-    !effectiveState.burnProposal &&
-    (currentPlayer?.bonePile.length ?? 0) > 0;
+    !!selectedCard &&
+    selectedCard.source === 'draw' &&
+    selectedCard.playerId === currentPlayerId;
 
   useEffect(() => {
     if (showTutorial && effectiveState.status === 'playing') {
@@ -156,6 +158,33 @@ export default function GameBoardInteractive({
         selectedCard.playerId === playerId &&
         selectedCard.columnIndex === columnIndex &&
         selectedCard.cardIndex === cardIndex;
+
+      // Ace shortcut: clicking an Ace with nothing else selected auto-plays it
+      // to a new foundation pile (Aces can always start a new pile). Saves the
+      // extra click on the "new foundation" slot.
+      if (clickedCard?.rank === 'A' && !selectedCard) {
+        if (source === 'bone') {
+          sendMove({ type: 'bone-to-foundation', foundationIndex: NEW_FOUNDATION_INDEX });
+          return;
+        }
+        if (source === 'tableau' && columnIndex !== undefined && cardIndex !== undefined) {
+          const column = player.tableau[columnIndex];
+          // Only the top card of a tableau column can play to foundation.
+          if (cardIndex === column.length - 1) {
+            sendMove({
+              type: 'tableau-to-foundation',
+              sourceColumn: columnIndex,
+              cardIndex,
+              foundationIndex: NEW_FOUNDATION_INDEX,
+            });
+            return;
+          }
+        }
+        if (source === 'draw' && cardIndex !== undefined) {
+          sendMove({ type: 'draw-to-foundation', drawCardIndex: cardIndex, foundationIndex: NEW_FOUNDATION_INDEX });
+          return;
+        }
+      }
 
       if (isSameCard) {
         setSelectedCard(null);
@@ -359,14 +388,6 @@ export default function GameBoardInteractive({
 
   return (
     <div className="min-h-screen felt-bg p-4">
-      {effectiveState.burnProposal && (
-        <BurnVoteModal
-          proposal={effectiveState.burnProposal}
-          state={effectiveState}
-          currentPlayerId={currentPlayerId}
-          onVote={(vote) => sendMove({ type: 'vote-burn', vote })}
-        />
-      )}
       {ghostCard && mouse && (
         <div
           className="fixed pointer-events-none z-[9998] opacity-90"
@@ -446,14 +467,18 @@ export default function GameBoardInteractive({
                 Declare Out!
               </Button>
             )}
-            {canProposeBurn && (
+            {canBurnSelectedDraw && (
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => sendMove({ type: 'propose-burn' })}
-                data-testid="button-propose-burn"
+                onClick={() => {
+                  if (selectedCard?.source !== 'draw' || selectedCard.cardIndex === undefined) return;
+                  sendMove({ type: 'burn-draw-card', drawCardIndex: selectedCard.cardIndex });
+                  setSelectedCard(null);
+                }}
+                data-testid="button-burn-draw-card"
                 className="border-orange-500/40 text-orange-300 hover:bg-orange-500/10"
-                title="Propose burning your top bone-pile card. Requires unanimous vote."
+                title="Move the selected draw card to the bottom of your draw pile (skips one card too, so your next flip-3 is different)."
               >
                 <Flame className="w-4 h-4 mr-2" />
                 Burn

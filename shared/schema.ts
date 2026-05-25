@@ -265,19 +265,10 @@ export interface PlayerState {
   bonePile: Card[];
   drawPile: Card[];
   currentDraw: Card[];
-  burnPile: Card[]; // Cards removed via voted-burn; penalised at round end like leftover bone cards
   cardBackImage?: string;
-  isAI?: boolean; // Engine-visible flag so AI players auto-vote yes on burn proposals
+  isAI?: boolean; // Engine-visible flag (AI players are auto-scheduled in gameSocket.ts)
   score: number; // Running total score
   roundScore?: number; // Score for current round
-}
-
-export type BurnVote = 'yes' | 'no' | 'pending';
-
-export interface BurnProposal {
-  proposerId: string;
-  votes: Record<string, BurnVote>; // keyed by playerId; proposer + AIs always 'yes'
-  createdAt: number;
 }
 
 export interface FoundationPile {
@@ -298,7 +289,6 @@ export interface RoundResult {
   foundationCards: number; // Cards played to foundation
   bonePileRemaining: number;
   tableauRemaining: number;
-  burnedCards: number; // Cards removed via the burn mechanic this round
   declaredOut: boolean; // Did they declare out?
   roundScore: number;
   totalScore: number;
@@ -323,6 +313,5 @@ export interface GameState {
   roundResults?: RoundResult[];
   winnerId?: string; // Player who won the game (reached target score)
   declaredOutId?: string; // Player who declared out this round
-  burnProposal?: BurnProposal; // Active vote-burn proposal, if any
   chatMessages?: ChatMessage[];
 }
