@@ -8,6 +8,7 @@ import Scoreboard from './Scoreboard';
 import GameChat from './GameChat';
 import ScoreboardTicker from './ScoreboardTicker';
 import AccountDropdown from './AccountDropdown';
+import ThemeToggle from './ThemeToggle';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Trophy, LogOut, MessageSquare, Wifi, WifiOff, Flame } from 'lucide-react';
@@ -437,6 +438,7 @@ export default function GameBoardInteractive({
             )}
             <ChipsBadge />
             <CreditBadge />
+            <ThemeToggle />
             <AccountDropdown />
             {canDeclareOut && (
               <Button size="sm" onClick={handleDeclareOut} data-testid="button-declare-out" className="btn-gold">
@@ -476,12 +478,18 @@ export default function GameBoardInteractive({
         <div className="lg:flex lg:gap-4 lg:items-start">
           {/* Game column */}
           <div className="flex-1 min-w-0 space-y-4">
-            <FoundationArea
-              foundations={effectiveState.foundations}
-              onFoundationClick={handleFoundationClick}
-              onFoundationAreaClick={handleFoundationAreaClick}
-              showMoveHint={selectedCard !== null}
-            />
+            {/* Sticky on mobile so the foundations are always reachable as a
+                drop target, even when the player has scrolled down to interact
+                with their bone pile / tableau / draw row. Drops back to normal
+                flow at lg+ where the whole board fits in the viewport. */}
+            <div className="sticky top-0 z-30 -mx-4 px-4 py-2 bg-background/85 backdrop-blur-sm lg:static lg:bg-transparent lg:backdrop-blur-none lg:mx-0 lg:px-0 lg:py-0">
+              <FoundationArea
+                foundations={effectiveState.foundations}
+                onFoundationClick={handleFoundationClick}
+                onFoundationAreaClick={handleFoundationAreaClick}
+                showMoveHint={selectedCard !== null}
+              />
+            </div>
 
             {currentPlayer && (
               <PlayerArea

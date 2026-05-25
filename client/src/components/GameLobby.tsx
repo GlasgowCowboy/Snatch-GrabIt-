@@ -3,8 +3,9 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import AccountDropdown from './AccountDropdown';
+import ThemeToggle from './ThemeToggle';
 import BettingPanel from './BettingPanel';
-import { Users, Copy, Check, Bot, LogOut, Share2, Link as LinkIcon, QrCode } from 'lucide-react';
+import { Users, Copy, Check, Bot, LogOut, Share2, Link as LinkIcon, QrCode, MessageCircle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
@@ -167,6 +168,13 @@ export default function GameLobby({
     }
   };
 
+  const handleWhatsAppShare = () => {
+    if (!inviteUrl || !roomCode) return;
+    const text = `🃏 Join my Snatch&GrabIt! game — room code ${roomCode}\n${inviteUrl}`;
+    // wa.me works on both mobile (opens the app) and desktop (opens web WhatsApp).
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+  };
+
   // Card-back image upload constraints. Images are base64-encoded inline in the
   // create-room JSON body and rebroadcast in every WS room update, so we keep
   // the limit tight — 1MB is plenty for a card design and stays comfortably
@@ -245,6 +253,7 @@ export default function GameLobby({
         <RewardedAdButton />
         <ChipsBadge />
         <CreditBadge />
+        <ThemeToggle />
         <AccountDropdown />
       </div>
       <div className="glass-strong rounded-2xl border border-gold/20 w-full max-w-2xl">
@@ -529,6 +538,16 @@ export default function GameLobby({
                   <Button
                     size="sm"
                     variant="outline"
+                    onClick={handleWhatsAppShare}
+                    data-testid="button-whatsapp-share"
+                    className="glass border-emerald-500/30 text-emerald-300 hover:border-emerald-400/50 hover:bg-emerald-500/10"
+                  >
+                    <MessageCircle className="w-4 h-4 mr-2" />
+                    WhatsApp
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
                     onClick={() => setShowQr((v) => !v)}
                     data-testid="button-toggle-qr"
                     className="glass border-gold/20 text-gold-light hover:border-gold/40 hover:bg-gold/10"
@@ -678,14 +697,19 @@ export default function GameLobby({
                     Leave
                   </Button>
                 )}
-                <Button
-                  variant="outline"
-                  className="flex-1 glass border-gold/20 text-gold-light hover:border-gold/40 hover:bg-gold/10"
-                  onClick={onToggleReady}
-                  data-testid="button-toggle-ready"
-                >
-                  {players[0]?.isReady ? 'Not Ready' : 'Ready'}
-                </Button>
+                {(() => {
+                  const me = players.find((p) => p.id === currentPlayerId);
+                  return (
+                    <Button
+                      variant="outline"
+                      className="flex-1 glass border-gold/20 text-gold-light hover:border-gold/40 hover:bg-gold/10"
+                      onClick={onToggleReady}
+                      data-testid="button-toggle-ready"
+                    >
+                      {me?.isReady ? 'Not Ready' : 'Ready'}
+                    </Button>
+                  );
+                })()}
                 {isHost && (
                   <Button
                     className="flex-1 btn-gold"

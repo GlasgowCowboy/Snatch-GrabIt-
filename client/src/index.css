@@ -157,6 +157,57 @@
   --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
 }
 
+/* Light theme override. Applied when next-themes adds .light to <html>.
+   Keep gold accent intact; swap base surfaces to white/cream and invert
+   foreground. Glass + felt-bg get their own overrides in @layer components
+   below so they don't render as nearly-invisible white-on-white. */
+.light {
+  --button-outline: rgba(0,0,0, .12);
+  --badge-outline: rgba(0,0,0, .08);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(0,0,0, .04);
+  --elevate-2: rgba(0,0,0, .08);
+
+  --background: 45 40% 97%;
+  --foreground: 225 30% 15%;
+  --border: 45 20% 85%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 225 30% 15%;
+  --card-border: 45 20% 88%;
+
+  --sidebar: 45 35% 95%;
+  --sidebar-foreground: 225 30% 15%;
+  --sidebar-border: 45 20% 85%;
+  --sidebar-primary: 45 95% 45%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 45 20% 92%;
+  --sidebar-accent-foreground: 225 30% 15%;
+  --sidebar-ring: 45 95% 45%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 225 30% 15%;
+  --popover-border: 45 20% 88%;
+
+  --primary: 45 95% 45%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 45 20% 92%;
+  --secondary-foreground: 225 30% 15%;
+
+  --muted: 45 25% 94%;
+  --muted-foreground: 225 8% 45%;
+
+  --accent: 45 20% 92%;
+  --accent-foreground: 225 30% 15%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --input: 45 20% 90%;
+  --ring: 45 95% 45%;
+}
+
 @layer base {
   * {
     @apply border-border;
@@ -242,6 +293,25 @@
       radial-gradient(ellipse at 80% 80%, rgba(0, 212, 255, 0.03) 0%, transparent 50%),
       radial-gradient(ellipse at 20% 90%, rgba(139, 92, 246, 0.03) 0%, transparent 50%),
       hsl(225 30% 8%);
+  }
+
+  /* Light-mode overrides — glass turns into a soft white card, felt-bg
+     becomes a warm cream gradient that still hints at the gold/cyan/purple
+     accents from the dark version. */
+  .light .glass {
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+  }
+  .light .glass-strong {
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  .light .felt-bg {
+    background:
+      radial-gradient(ellipse at 50% 0%, rgba(245, 166, 35, 0.18) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 80%, rgba(0, 180, 220, 0.08) 0%, transparent 50%),
+      radial-gradient(ellipse at 20% 90%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
+      hsl(45 40% 97%);
   }
 
   /* 3D card shadow system */

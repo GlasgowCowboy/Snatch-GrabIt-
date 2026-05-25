@@ -8,6 +8,19 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Apply persisted theme class before React mounts to avoid a dark/light
+      // flash on initial paint. Mirrors the default in client/src/hooks/use-theme.ts.
+      (function () {
+        try {
+          var stored = localStorage.getItem('sg-theme');
+          var theme = stored === 'light' || stored === 'dark' ? stored : 'dark';
+          document.documentElement.classList.add(theme);
+        } catch (_) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
