@@ -5,7 +5,7 @@ import { Badge } from './ui/badge';
 import AccountDropdown from './AccountDropdown';
 import ThemeToggle from './ThemeToggle';
 import BettingPanel from './BettingPanel';
-import { Users, Copy, Check, Bot, LogOut, Share2, Link as LinkIcon, QrCode, MessageCircle } from 'lucide-react';
+import { Users, Copy, Check, Bot, LogOut, Share2, Link as LinkIcon, QrCode, MessageCircle, Circle, CheckCircle2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Switch } from './ui/switch';
@@ -699,14 +699,32 @@ export default function GameLobby({
                 )}
                 {(() => {
                   const me = players.find((p) => p.id === currentPlayerId);
+                  const isReady = !!me?.isReady;
+                  // State-style label (clearer for first-time players than the
+                  // toggle-action pattern): the button shows what state you're
+                  // CURRENTLY in, tapping it flips that state.
                   return (
                     <Button
-                      variant="outline"
-                      className="flex-1 glass border-gold/20 text-gold-light hover:border-gold/40 hover:bg-gold/10"
+                      variant={isReady ? 'default' : 'outline'}
+                      className={
+                        isReady
+                          ? 'flex-1 bg-emerald-500 hover:bg-emerald-600 text-white border border-emerald-600 font-semibold'
+                          : 'flex-1 glass border-gold/30 text-gold-light hover:border-gold/50 hover:bg-gold/10'
+                      }
                       onClick={onToggleReady}
                       data-testid="button-toggle-ready"
                     >
-                      {me?.isReady ? 'Not Ready' : 'Ready'}
+                      {isReady ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 mr-2" />
+                          Ready
+                        </>
+                      ) : (
+                        <>
+                          <Circle className="w-4 h-4 mr-2" />
+                          Tap when ready
+                        </>
+                      )}
                     </Button>
                   );
                 })()}
