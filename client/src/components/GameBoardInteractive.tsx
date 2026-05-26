@@ -27,6 +27,8 @@ interface GameBoardInteractiveProps {
   gameState: GameState;
   currentPlayerId: string;
   connectionState: ConnectionState;
+  /** Other-player presence — playerIds whose WS is currently dropped. */
+  disconnectedPlayerIds?: string[];
   sendMove: (move: GameMove) => void;
   sendChat: (message: string) => void;
   sendNextRound: () => void;
@@ -38,6 +40,7 @@ export default function GameBoardInteractive({
   gameState,
   currentPlayerId,
   connectionState,
+  disconnectedPlayerIds = [],
   sendMove,
   sendChat,
   sendNextRound,
@@ -535,7 +538,11 @@ export default function GameBoardInteractive({
                 <h2 className="text-sm font-semibold text-muted-foreground">Other Players</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {otherPlayers.map((player) => (
-                    <PlayerArea key={player.id} player={player} />
+                    <PlayerArea
+                      key={player.id}
+                      player={player}
+                      isDisconnected={disconnectedPlayerIds.includes(player.id)}
+                    />
                   ))}
                 </div>
               </div>

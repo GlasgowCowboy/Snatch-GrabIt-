@@ -39,6 +39,8 @@ interface GameLobbyProps {
   gameDbId?: string;
   players?: Player[];
   currentPlayerId?: string; // ID of the current logged-in player
+  /** PlayerIds whose WS connection is currently dropped (server-derived). */
+  disconnectedPlayerIds?: string[];
   initialJoinCode?: string; // Prefill the "join room" input from a deep link (?join=…)
   onCreateRoom?: (playerName: string, cardBackImage?: string, scoringMethod?: ScoringMethod, targetScore?: number, aiConfig?: {numAI: number, difficulty: AIDifficulty}) => void;
   onJoinRoom?: (roomCode: string, playerName: string, cardBackImage?: string) => void;
@@ -55,6 +57,7 @@ export default function GameLobby({
   gameDbId,
   players = [],
   currentPlayerId,
+  disconnectedPlayerIds = [],
   initialJoinCode,
   onCreateRoom,
   onJoinRoom,
@@ -656,20 +659,34 @@ export default function GameLobby({
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  {players.map((player) => (
-                    <div
-                      key={player.id}
-                      className="flex items-center justify-between p-3 glass rounded-md border border-gold/10"
-                      data-testid={`player-slot-${player.id}`}
-                    >
-                      <span className="text-sm font-medium text-gold-light">{player.name}</span>
-                      {player.isReady && (
-                        <Badge variant="default" className="text-xs badge-gold">
-                          Ready
-                        </Badge>
-                      )}
-                    </div>
-                  ))}
+                  {players.map((player) => {
+                    const isOffline = !player.isAI && disconnectedPlayerIds.includes(player.id);
+                    return (
+                      <div
+                        key={player.id}
+                        className="flex items-center justify-between p-3 glass rounded-md border border-gold/10"
+                        data-testid={`player-slot-${player.id}`}
+                      >
+                        <span className="text-sm font-medium text-gold-light flex items-center gap-2">
+                          {player.name}
+                          {isOffline && (
+                            <span
+                              className="text-[10px] uppercase font-bold tracking-wide px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                              title="Lost connection — may have closed the tab or dropped Wi-Fi."
+                              data-testid={`player-disconnected-${player.id}`}
+                            >
+                              ● Offline
+                            </span>
+                          )}
+                        </span>
+                        {player.isReady && (
+                          <Badge variant="default" className="text-xs badge-gold">
+                            Ready
+                          </Badge>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

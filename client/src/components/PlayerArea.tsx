@@ -15,6 +15,8 @@ interface SelectedCard {
 interface PlayerAreaProps {
   player: PlayerState;
   isCurrentPlayer?: boolean;
+  /** True when this player's WS has dropped — shows a badge to other players. */
+  isDisconnected?: boolean;
   bonePilePosition?: 'left' | 'right';
   onBonePileClick?: () => void;
   onTableauCardClick?: (columnIndex: number, cardIndex: number) => void;
@@ -27,6 +29,7 @@ interface PlayerAreaProps {
 export default function PlayerArea({
   player,
   isCurrentPlayer = false,
+  isDisconnected = false,
   bonePilePosition = 'left',
   onBonePileClick,
   onTableauCardClick,
@@ -49,9 +52,20 @@ export default function PlayerArea({
         <h2 className="text-sm font-semibold text-gold/70">
           {isCurrentPlayer ? 'Your Area' : 'Player Area'}
         </h2>
-        <span className="text-sm font-semibold" data-testid={`player-name-${player.id}`}>
-          {player.name}
-        </span>
+        <div className="flex items-center gap-2">
+          {isDisconnected && (
+            <span
+              className="text-[10px] uppercase font-bold tracking-wide px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30"
+              title="This player has lost their connection. The game will continue."
+              data-testid={`player-disconnected-${player.id}`}
+            >
+              ● Offline
+            </span>
+          )}
+          <span className="text-sm font-semibold" data-testid={`player-name-${player.id}`}>
+            {player.name}
+          </span>
+        </div>
       </div>
 
       {/* Mobile Layout: Bone pile left, tableau right */}

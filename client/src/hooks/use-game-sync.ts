@@ -10,6 +10,8 @@ export interface UseGameSyncResult {
   room: Room | null;
   gameState: GameState | null;
   connectionState: ConnectionState;
+  /** Other-player presence: playerIds whose own WS is currently dropped. */
+  disconnectedPlayerIds: string[];
   lastError: string | null;
   sendMove: (move: GameMove) => void;
   sendChat: (message: string) => void;
@@ -42,6 +44,7 @@ export function useGameSync(
   const [room, setRoom] = useState<Room | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>('closed');
+  const [disconnectedPlayerIds, setDisconnectedPlayerIds] = useState<string[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const errorHandlerRef = useRef(onError);
@@ -66,6 +69,7 @@ export function useGameSync(
     // Reset on room change so stale state doesn't leak across rooms
     setRoom(null);
     setGameState(null);
+    setDisconnectedPlayerIds([]);
     setLastError(null);
 
     let cancelled = false;
@@ -100,6 +104,8 @@ export function useGameSync(
           setRoom(msg.room);
         } else if (msg.type === 'state') {
           setGameState(msg.state);
+        } else if (msg.type === 'presence') {
+          setDisconnectedPlayerIds(msg.disconnectedPlayerIds);
         } else if (msg.type === 'error') {
           setLastError(msg.message);
           errorHandlerRef.current?.(msg.message);
@@ -177,6 +183,7 @@ export function useGameSync(
     room,
     gameState,
     connectionState,
+    disconnectedPlayerIds,
     lastError,
     sendMove: (move) => sendRaw({ type: 'move', move }),
     sendChat: (message) => sendRaw({ type: 'chat', message }),

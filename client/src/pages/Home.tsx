@@ -39,6 +39,7 @@ export default function Home() {
     sendChat,
     sendNextRound,
     connectionState,
+    disconnectedPlayerIds,
   } = useGameSync(roomCode || undefined, playerId || undefined, {
     onError: (msg) =>
       toast({ title: 'Invalid move', description: msg, variant: 'destructive' }),
@@ -160,6 +161,7 @@ export default function Home() {
         gameState={gameState}
         currentPlayerId={playerId}
         connectionState={connectionState}
+        disconnectedPlayerIds={disconnectedPlayerIds}
         sendMove={sendMove}
         sendChat={sendChat}
         sendNextRound={sendNextRound}
@@ -178,6 +180,7 @@ export default function Home() {
         gameDbId={uiState !== 'lobby' ? room?.gameDbId : undefined}
         players={uiState !== 'lobby' ? room?.players : undefined}
         currentPlayerId={playerId}
+        disconnectedPlayerIds={disconnectedPlayerIds}
         initialJoinCode={uiState === 'lobby' ? initialJoinCode : undefined}
         onCreateRoom={handleCreateRoom}
         onJoinRoom={handleJoinRoom}

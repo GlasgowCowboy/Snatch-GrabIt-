@@ -138,12 +138,38 @@ class GameSocketServer {
     if (room.gameState) {
       this.send(ws, { type: "state", state: room.gameState });
     }
+    // Send current presence to the newly-connected client + tell others
+    // someone (potentially they) reconnected.
+    this.broadcastPresence(code);
 
     ws.on("message", (data) => this.onMessage(code, conn, data.toString()));
     ws.on("close", () => {
       set.delete(conn);
       if (set.size === 0) this.connectionsByRoom.delete(code);
+      // Tell remaining players this connection dropped — they need to see
+      // who's no longer at the table.
+      this.broadcastPresence(code);
     });
+  }
+
+  /**
+   * Push the current set of disconnected (human) playerIds to every connected
+   * client in the room. A human player is "disconnected" when no live WS in
+   * `connectionsByRoom` carries their playerId. AI players are never counted.
+   */
+  private broadcastPresence(code: string) {
+    const room = roomManager.getRoom(code);
+    if (!room) return;
+    const conns = this.connectionsByRoom.get(code);
+    const connectedIds = new Set<string>();
+    if (conns) {
+      conns.forEach((c) => connectedIds.add(c.playerId));
+    }
+    const disconnectedPlayerIds = room.players
+      .filter((p) => !p.isAI && !connectedIds.has(p.id))
+      .map((p) => p.id);
+    const payload: ServerMessage = { type: "presence", disconnectedPlayerIds };
+    conns?.forEach((conn) => this.send(conn.ws, payload));
   }
 
   private onMessage(code: string, conn: Conn, raw: string) {
