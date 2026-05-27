@@ -13,6 +13,8 @@ import ForgotPasswordPage from "@/pages/forgot-password-page";
 import ResetPasswordPage from "@/pages/reset-password-page";
 import AdminPage from "@/pages/admin-page";
 import HistoryPage from "@/pages/history-page";
+import PrivacyPolicy from "@/pages/privacy-policy";
+import TermsOfService from "@/pages/terms-of-service";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -26,6 +28,8 @@ function Router() {
       </Route>
       <Route path="/forgot-password" component={ForgotPasswordPage} />
       <Route path="/reset-password" component={ResetPasswordPage} />
+      <Route path="/privacy" component={PrivacyPolicy} />
+      <Route path="/terms" component={TermsOfService} />
       <ProtectedRoute path="/profile" component={ProfilePage} />
       <ProtectedRoute path="/history" component={HistoryPage} />
       <ProtectedRoute path="/admin" component={AdminPage} />

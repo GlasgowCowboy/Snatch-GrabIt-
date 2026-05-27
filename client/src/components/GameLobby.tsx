@@ -251,7 +251,7 @@ export default function GameLobby({
   const allReady = players.length > 1 && players.every(p => p.isReady);
 
   return (
-    <div className="min-h-screen felt-bg flex items-center justify-center p-4">
+    <div className="min-h-screen felt-bg flex flex-col items-center justify-center p-4">
       <div className="absolute top-4 right-4 flex items-center gap-2">
         <RewardedAdButton />
         <ChipsBadge />
@@ -760,6 +760,15 @@ export default function GameLobby({
           )}
         </div>
       </div>
+      {/* Footer — links to legal pages so AdSense reviewers (and curious
+          users) can find them within one click of the landing. */}
+      <footer className="mt-4 mb-2 text-xs text-gold-light/40 flex flex-wrap items-center justify-center gap-2">
+        <span>&copy; Snatch&amp;GrabIt!</span>
+        <span>·</span>
+        <a href="/privacy" className="hover:text-gold-light/80 underline-offset-2 hover:underline">Privacy</a>
+        <span>·</span>
+        <a href="/terms" className="hover:text-gold-light/80 underline-offset-2 hover:underline">Terms</a>
+      </footer>
     </div>
   );
 }

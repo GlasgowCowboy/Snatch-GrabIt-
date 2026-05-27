@@ -1,0 +1,7 @@
+# ads.txt for snatchgrab.onrender.com
+# Once approved by Google AdSense, replace pub-XXXXXXXXXXXXXXXX below with
+# your actual publisher ID. Until then this file just declares "no authorized
+# resellers", which is the safe default.
+# Spec: https://iabtechlab.com/ads-txt/
+
+google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0
