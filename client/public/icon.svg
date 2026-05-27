@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Snatch&amp;GrabIt!">
+  <!-- Dark navy app-icon background (matches felt-bg) with rounded square clip -->
+  <defs>
+    <clipPath id="rounded">
+      <rect width="512" height="512" rx="96" ry="96"/>
+    </clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a2138"/>
+      <stop offset="100%" stop-color="#0e111b"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#rounded)">
+    <!-- Background -->
+    <rect width="512" height="512" fill="url(#bg)"/>
+    <!-- Faint gold glow from the top -->
+    <radialGradient id="glow" cx="50%" cy="0%" r="60%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-offset="0"/>
+    </radialGradient>
+    <rect width="512" height="512" fill="url(#glow)"/>
+    <!-- Three fanned cards (back / middle / front), gold gradient, centred -->
+    <g transform="translate(256 256)">
+      <!-- Back card -->
+      <rect x="-160" y="-130" width="224" height="320" rx="32" fill="url(#card)" opacity="0.4" transform="rotate(-14)"/>
+      <!-- Middle card -->
+      <rect x="-112" y="-150" width="224" height="320" rx="32" fill="url(#card)" opacity="0.7"/>
+      <!-- Front card with diamond pip -->
+      <g transform="rotate(12) translate(48 -30)">
+        <rect x="-64" y="-160" width="224" height="320" rx="32" fill="url(#card)"/>
+        <path d="M48 -80 L80 0 L48 80 L16 0 Z" fill="#1a1a2e"/>
+      </g>
+    </g>
+  </g>
+</svg>

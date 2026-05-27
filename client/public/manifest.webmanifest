@@ -1,0 +1,20 @@
+{
+  "name": "Snatch&GrabIt!",
+  "short_name": "Snatch&GrabIt",
+  "description": "Fast-paced multiplayer competitive solitaire. Race to empty your bone pile first.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e111b",
+  "theme_color": "#f59e0b",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

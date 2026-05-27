@@ -4,6 +4,7 @@ import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import AccountDropdown from './AccountDropdown';
 import ThemeToggle from './ThemeToggle';
+import InstallAppButton from './InstallAppButton';
 import BettingPanel from './BettingPanel';
 import { Users, Copy, Check, Bot, LogOut, Share2, Link as LinkIcon, QrCode, MessageCircle, Circle, CheckCircle2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -253,6 +254,7 @@ export default function GameLobby({
   return (
     <div className="min-h-screen felt-bg flex flex-col items-center justify-center p-4">
       <div className="absolute top-4 right-4 flex items-center gap-2">
+        <InstallAppButton />
         <RewardedAdButton />
         <ChipsBadge />
         <CreditBadge />
