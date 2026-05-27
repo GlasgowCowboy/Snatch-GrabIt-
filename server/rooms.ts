@@ -6,7 +6,7 @@ import {
   type Room,
   type RoomPlayer,
 } from "@shared/rooms";
-import type { ScoringMethod } from "@shared/schema";
+import type { GameState, ScoringMethod } from "@shared/schema";
 import { storage } from "./storage";
 
 const AI_NAMES = ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve', 'Frank', 'Grace'];
@@ -208,6 +208,70 @@ export class RoomManager {
         this.rooms.delete(code);
       }
     });
+  }
+
+  /**
+   * Boot-restore: hydrate any in-flight games persisted to the DB back into
+   * the in-memory map. Called once on server start. Skips snapshots that
+   * fail validation (e.g. older shape than the current code expects).
+   *
+   * Returns the list of room codes restored — caller uses this to restart
+   * AI timers via gameSocket.
+   */
+  async restoreActiveGames(): Promise<string[]> {
+    const snapshots = await storage.listActiveGameStates();
+    const restored: string[] = [];
+    for (const { liveState, gameId } of snapshots) {
+      try {
+        const snap = liveState as {
+          code?: string;
+          hostId?: string;
+          players?: RoomPlayer[];
+          scoringMethod?: ScoringMethod;
+          targetScore?: number;
+          aiConfig?: AIConfig;
+          gameDbId?: string;
+          gameState?: GameState;
+          createdAt?: number;
+        };
+        if (
+          !snap?.code ||
+          !snap.hostId ||
+          !Array.isArray(snap.players) ||
+          !snap.scoringMethod ||
+          !snap.targetScore ||
+          !snap.gameDbId ||
+          !snap.gameState
+        ) {
+          // eslint-disable-next-line no-console
+          console.warn(`[restore] skipping malformed snapshot for game ${gameId}`);
+          continue;
+        }
+        // Sanity: the DB id we read from MUST match the one inside the
+        // snapshot. If it doesn't, something is very wrong — bail rather
+        // than restoring an inconsistent room.
+        if (snap.gameDbId !== gameId) continue;
+        // Skip if a room with the same code is somehow already in memory
+        // (e.g. duplicate restore).
+        if (this.rooms.has(snap.code)) continue;
+        this.rooms.set(snap.code, {
+          code: snap.code,
+          hostId: snap.hostId,
+          players: snap.players,
+          scoringMethod: snap.scoringMethod,
+          targetScore: snap.targetScore,
+          aiConfig: snap.aiConfig,
+          status: 'playing',
+          gameDbId: snap.gameDbId,
+          gameState: snap.gameState,
+          createdAt: snap.createdAt ?? Date.now(),
+        });
+        restored.push(snap.code);
+      } catch {
+        // Skip and keep going — never let a single bad row break the boot.
+      }
+    }
+    return restored;
   }
 }
 

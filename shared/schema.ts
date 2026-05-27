@@ -91,11 +91,20 @@ export const games = pgTable(
     winnerId: varchar("winner_id"),
     scoringMethod: text("scoring_method").notNull(), // 'fullHand' or 'round'
     targetScore: integer("target_score").notNull(),
+    // Live game state, JSON. Written debounced (~1/s per room) by the WS
+    // server so a crash / redeploy can restore in-flight games on boot.
+    // Cleared (set to NULL) when the game finishes — finished games live in
+    // game_participants going forward, not here.
+    liveState: json("live_state"),
+    liveStateUpdatedAt: timestamp("live_state_updated_at", { withTimezone: true }),
   },
   (table) => ({
     // History list orders by finished_at desc — index keeps it cheap as the
     // games table grows.
     finishedAtIdx: index("games_finished_at_idx").on(table.finishedAt),
+    // Boot-restore scans for "started but not yet finished" games with a
+    // live_state present. Composite to avoid a full-table scan.
+    activeIdx: index("games_active_idx").on(table.startedAt, table.finishedAt),
   }),
 );
 

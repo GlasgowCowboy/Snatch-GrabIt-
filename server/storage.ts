@@ -69,6 +69,12 @@ export interface IStorage {
   getGameParticipants(gameId: string): Promise<GameParticipant[]>;
   getUserGames(userId: string): Promise<UserGameSummary[]>;
   getLeaderboard(limit?: number): Promise<LeaderboardEntry[]>;
+  /** Write-through persistence of the live game state for crash recovery. */
+  persistLiveState(gameId: string, state: unknown): Promise<void>;
+  /** Drop the live_state blob (called when a game finishes or is abandoned). */
+  clearLiveState(gameId: string): Promise<void>;
+  /** All games that have started but not finished and still have a live_state blob. */
+  listActiveGameStates(): Promise<Array<{ gameId: string; liveState: unknown; updatedAt: Date | null }>>;
 
   // Password reset
   createPasswordResetToken(token: InsertPasswordResetToken): Promise<PasswordResetToken>;
@@ -192,6 +198,35 @@ export class DatabaseStorage implements IStorage {
   async addGameParticipant(participant: InsertGameParticipant): Promise<GameParticipant> {
     const [newParticipant] = await db.insert(gameParticipants).values(participant).returning();
     return newParticipant;
+  }
+
+  async persistLiveState(gameId: string, state: unknown): Promise<void> {
+    await db
+      .update(games)
+      .set({ liveState: state as any, liveStateUpdatedAt: new Date() })
+      .where(eq(games.id, gameId));
+  }
+
+  async clearLiveState(gameId: string): Promise<void> {
+    await db
+      .update(games)
+      .set({ liveState: null, liveStateUpdatedAt: null })
+      .where(eq(games.id, gameId));
+  }
+
+  async listActiveGameStates(): Promise<Array<{ gameId: string; liveState: unknown; updatedAt: Date | null }>> {
+    // "Active" = started, not finished, has a saved snapshot.
+    const rows = await db
+      .select({
+        gameId: games.id,
+        liveState: games.liveState,
+        updatedAt: games.liveStateUpdatedAt,
+      })
+      .from(games)
+      .where(
+        sql`${games.startedAt} is not null and ${games.finishedAt} is null and ${games.liveState} is not null`,
+      );
+    return rows.map((r) => ({ gameId: r.gameId, liveState: r.liveState, updatedAt: r.updatedAt }));
   }
 
   async getGameParticipants(gameId: string): Promise<GameParticipant[]> {

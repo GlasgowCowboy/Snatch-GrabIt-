@@ -80,6 +80,17 @@ class GameSocketServer {
     aiPlayers.forEach((p) => this.scheduleAIMove(room.code, p.id, room.aiConfig!.difficulty));
   }
 
+  /**
+   * Called once on server boot for each room restored from the DB. Re-arms AI
+   * timers without re-broadcasting (no clients are connected yet) and without
+   * the lobby setup work onGameStarted does.
+   */
+  onRoomRestored(room: Room) {
+    if (!room.aiConfig || !room.gameState || room.gameState.status !== 'playing') return;
+    const aiPlayers = room.players.filter((p) => p.isAI);
+    aiPlayers.forEach((p) => this.scheduleAIMove(room.code, p.id, room.aiConfig!.difficulty));
+  }
+
   /** Broadcast lobby/room state changes to all connected clients in the room. */
   broadcastRoom(code: string) {
     const room = roomManager.getRoom(code);
@@ -328,8 +339,45 @@ class GameSocketServer {
     if (!room || !room.gameState) return;
     const payload: ServerMessage = { type: "state", state: room.gameState };
     const set = this.connectionsByRoom.get(code);
-    if (!set) return;
-    set.forEach((conn) => this.send(conn.ws, payload));
+    if (set) set.forEach((conn) => this.send(conn.ws, payload));
+    // Write-through to the DB so the game survives a crash / redeploy.
+    // Debounced inside scheduleLiveStatePersist so a flurry of moves
+    // doesn't hammer the DB.
+    this.scheduleLiveStatePersist(room.code);
+  }
+
+  /** Per-room debounce so we coalesce bursts of moves into one write/sec. */
+  private livePersistTimers = new Map<string, NodeJS.Timeout>();
+  private static readonly LIVE_PERSIST_DEBOUNCE_MS = 1000;
+
+  private scheduleLiveStatePersist(code: string) {
+    if (this.livePersistTimers.has(code)) return; // already scheduled
+    const timer = setTimeout(() => {
+      this.livePersistTimers.delete(code);
+      const room = roomManager.getRoom(code);
+      if (!room || !room.gameState) return;
+      // Don't bother persisting once the game has finished — finalizeFinishedGame
+      // calls clearLiveState itself.
+      if (room.gameState.status === 'gameOver') return;
+      // Persist the FULL room snapshot (not just gameState) so reboot can
+      // restore the code, players, scoring settings, etc. Without code, the
+      // WS endpoint has no way to route reconnects.
+      const snapshot = {
+        code: room.code,
+        hostId: room.hostId,
+        players: room.players,
+        scoringMethod: room.scoringMethod,
+        targetScore: room.targetScore,
+        aiConfig: room.aiConfig,
+        gameDbId: room.gameDbId,
+        gameState: room.gameState,
+        createdAt: room.createdAt,
+      };
+      void storage
+        .persistLiveState(room.gameDbId, snapshot)
+        .catch((err) => log(`persistLiveState failed for ${room.gameDbId}: ${err}`));
+    }, GameSocketServer.LIVE_PERSIST_DEBOUNCE_MS);
+    this.livePersistTimers.set(code, timer);
   }
 
   private send(ws: WebSocket, msg: ServerMessage) {
@@ -398,6 +446,9 @@ export async function finalizeFinishedGame(
     winnerId: state.winnerId ? userIdByPlayerId.get(state.winnerId) ?? null : null,
     finishedAt: new Date(),
   });
+  // Game is done — drop the live_state blob, it's no longer needed and the
+  // finished record now lives in game_participants.
+  await storage.clearLiveState(gameDbId).catch(() => {});
   await Promise.all(
     ranked.map((player, idx) =>
       storage.addGameParticipant({

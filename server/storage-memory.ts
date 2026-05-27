@@ -129,6 +129,8 @@ export class MemoryStorage implements IStorage {
       winnerId: game.winnerId ?? null,
       scoringMethod: game.scoringMethod,
       targetScore: game.targetScore,
+      liveState: null,
+      liveStateUpdatedAt: null,
     };
     this.gamesList.set(id, newGame);
     return newGame;
@@ -141,6 +143,27 @@ export class MemoryStorage implements IStorage {
     if (updates.startedAt !== undefined) game.startedAt = updates.startedAt;
     if (updates.finishedAt !== undefined) game.finishedAt = updates.finishedAt;
     return game;
+  }
+
+  private liveStates = new Map<string, { state: unknown; updatedAt: Date }>();
+
+  async persistLiveState(gameId: string, state: unknown): Promise<void> {
+    this.liveStates.set(gameId, { state, updatedAt: new Date() });
+  }
+
+  async clearLiveState(gameId: string): Promise<void> {
+    this.liveStates.delete(gameId);
+  }
+
+  async listActiveGameStates(): Promise<Array<{ gameId: string; liveState: unknown; updatedAt: Date | null }>> {
+    const out: Array<{ gameId: string; liveState: unknown; updatedAt: Date | null }> = [];
+    this.liveStates.forEach((v, gameId) => {
+      const game = this.gamesList.get(gameId);
+      if (game && game.startedAt && !game.finishedAt) {
+        out.push({ gameId, liveState: v.state, updatedAt: v.updatedAt });
+      }
+    });
+    return out;
   }
 
   async addGameParticipant(participant: InsertGameParticipant): Promise<GameParticipant> {

@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { gameSocket } from "./gameSocket";
+import { roomManager } from "./rooms";
 
 const app = express();
 // Card-back image uploads are base64-encoded inline in JSON bodies. The client
@@ -67,7 +68,23 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '3000', 10);
-  server.listen(port, "0.0.0.0", () => {
+  server.listen(port, "0.0.0.0", async () => {
     log(`serving on port ${port}`);
+    // Crash recovery: pull any games that were in flight when this process
+    // last died out of the DB and put them back in the in-memory room map.
+    // Restart AI timers for each so the game keeps moving even before any
+    // human reconnects. Best-effort — failures here must not block boot.
+    try {
+      const restored = await roomManager.restoreActiveGames();
+      if (restored.length > 0) {
+        log(`restored ${restored.length} in-flight game${restored.length === 1 ? '' : 's'}: ${restored.join(', ')}`);
+        for (const code of restored) {
+          const room = roomManager.getRoom(code);
+          if (room) gameSocket.onRoomRestored(room);
+        }
+      }
+    } catch (err) {
+      log(`live-state restore failed: ${err}`);
+    }
   });
 })();
