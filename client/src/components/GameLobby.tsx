@@ -19,6 +19,7 @@ import { AIDifficulty } from '@shared/aiPlayer';
 import SponsorBanner from './SponsorBanner';
 import PendingInvites from './PendingInvites';
 import Logo from './Logo';
+import LandingScreen from './LandingScreen';
 import CreditBadge from './CreditBadge';
 import ChipsBadge from './ChipsBadge';
 import RewardedAdButton from './RewardedAdButton';
@@ -276,224 +277,16 @@ export default function GameLobby({
         </div>
         <div className="p-6">
           {!inLobby ? (
-            <div className="space-y-6">
-              <PendingInvites
-                onAccept={(code) => {
-                  if (!playerName.trim()) {
-                    toast({ title: 'Enter your name first', description: 'Then click Join again.', variant: 'destructive' });
-                    return;
-                  }
-                  onJoinRoom?.(code, playerName, cardBackImage);
-                }}
-              />
-              <div className="space-y-3">
-                <Input
-                  placeholder="Enter your name"
-                  value={playerName}
-                  onChange={(e) => setPlayerName(e.target.value)}
-                  data-testid="input-player-name"
-                />
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">
-                    Card Back Design (Optional)
-                  </label>
-                  <div className="flex gap-3 items-center">
-                    <Input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageUpload}
-                      data-testid="input-card-back"
-                      className="flex-1"
-                    />
-                    {cardBackImage && (
-                      <div className="w-12 h-16 rounded-md border border-border overflow-hidden">
-                        <img
-                          src={cardBackImage}
-                          alt="Card back preview"
-                          className="w-full h-full object-cover"
-                          data-testid="img-card-back-preview"
-                        />
-                      </div>
-                    )}
-                  </div>
-                  {uploadError && (
-                    <p className="text-xs text-destructive" data-testid="text-upload-error" role="alert">
-                      {uploadError}
-                    </p>
-                  )}
-                  {!uploadError && cardBackImage && (
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span
-                        className="text-green-600 dark:text-green-400 truncate"
-                        data-testid="text-upload-success"
-                      >
-                        ✓ Ready to use{uploadedFileLabel ? ` — ${uploadedFileLabel}` : ''}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleClearCardBack}
-                        data-testid="button-clear-card-back"
-                        className="text-muted-foreground hover:text-destructive underline shrink-0"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    JPG, PNG, GIF, or WebP — max 1 MB. Resize first if your file is larger.
-                  </p>
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">
-                    Scoring Method
-                  </label>
-                  <Select value={scoringMethod} onValueChange={(value) => setScoringMethod(value as ScoringMethod)}>
-                    <SelectTrigger data-testid="select-scoring-method">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="fullHand">Full Hand Scoring (Complex)</SelectItem>
-                      <SelectItem value="round">Round Scoring (Simple)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {scoringMethod === 'fullHand' 
-                      ? 'Foundation cards (+1), Remaining cards (-2 each). First out gets +5 bonus.'
-                      : 'First player to go out gets 1 point per round.'
-                    }
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-muted-foreground">
-                    Target Score
-                  </label>
-                  <Select value={targetScore.toString()} onValueChange={(value) => setTargetScore(Number(value))}>
-                    <SelectTrigger data-testid="select-target-score">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {scoringMethod === 'fullHand' ? (
-                        <>
-                          <SelectItem value="50">50 Points (Short Game)</SelectItem>
-                          <SelectItem value="100">100 Points (Medium Game)</SelectItem>
-                          <SelectItem value="150">150 Points (Long Game)</SelectItem>
-                        </>
-                      ) : (
-                        <>
-                          <SelectItem value="3">First to 3 Rounds</SelectItem>
-                          <SelectItem value="5">First to 5 Rounds</SelectItem>
-                        </>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-3 p-4 glass rounded-lg border border-gold/15">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Bot className="w-4 h-4 text-gold-light/60" />
-                      <Label htmlFor="ai-toggle" className="text-sm font-medium">
-                        Play vs AI
-                      </Label>
-                    </div>
-                    <Switch
-                      id="ai-toggle"
-                      checked={playVsAI}
-                      onCheckedChange={setPlayVsAI}
-                      data-testid="switch-play-vs-ai"
-                    />
-                  </div>
-                  
-                  {playVsAI && (
-                    <>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-muted-foreground">
-                          Number of AI Opponents
-                        </label>
-                        <Select value={numAI.toString()} onValueChange={(value) => setNumAI(Number(value))}>
-                          <SelectTrigger data-testid="select-num-ai">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="1">1 AI Player (2 total)</SelectItem>
-                            <SelectItem value="2">2 AI Players (3 total)</SelectItem>
-                            <SelectItem value="3">3 AI Players (4 total)</SelectItem>
-                            <SelectItem value="4">4 AI Players (5 total)</SelectItem>
-                            <SelectItem value="5">5 AI Players (6 total)</SelectItem>
-                            <SelectItem value="6">6 AI Players (7 total)</SelectItem>
-                            <SelectItem value="7">7 AI Players (8 total)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-muted-foreground">
-                          AI Difficulty
-                        </label>
-                        <Select value={aiDifficulty} onValueChange={(value) => setAIDifficulty(value as AIDifficulty)}>
-                          <SelectTrigger data-testid="select-ai-difficulty">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="easy">Easy (Beginner)</SelectItem>
-                            <SelectItem value="medium">Medium (Intermediate)</SelectItem>
-                            <SelectItem value="hard">Hard (Advanced)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-muted-foreground">
-                          {aiDifficulty === 'easy' 
-                            ? 'AI makes random valid moves'
-                            : aiDifficulty === 'medium'
-                            ? 'AI prefers foundation moves and tableau organization'
-                            : 'AI uses strategic play with optimal move selection'
-                          }
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <Button
-                  className="w-full btn-gold"
-                  onClick={() => onCreateRoom?.(playerName, cardBackImage, scoringMethod, targetScore, playVsAI ? {numAI, difficulty: aiDifficulty} : undefined)}
-                  disabled={!playerName.trim()}
-                  data-testid="button-create-room"
-                >
-                  {playVsAI ? `Create AI Game (${numAI + 1} Players)` : 'Create New Room'}
-                </Button>
-              </div>
-
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t border-gold/20" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-transparent backdrop-blur-sm px-3 text-gold-light/50">
-                    Or join existing
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <Input
-                  placeholder="Enter room code"
-                  value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                  data-testid="input-room-code"
-                />
-                <Button
-                  className="w-full glass border border-gold/20 text-gold-light hover:border-gold/40 hover:bg-gold/10"
-                  variant="secondary"
-                  onClick={() => onJoinRoom?.(joinCode, playerName, cardBackImage)}
-                  disabled={!playerName.trim() || !joinCode.trim()}
-                  data-testid="button-join-room"
-                >
-                  Join Room
-                </Button>
-              </div>
-            </div>
+            <LandingScreen
+              initialJoinCode={initialJoinCode}
+              isLoggedIn={!!user}
+              profileDisplayName={profile?.displayName ?? undefined}
+              profileCardBack={profile?.cardBackUrl ?? undefined}
+              onCreateRoom={(name, cardBack, method, target, aiConfig) =>
+                onCreateRoom?.(name, cardBack, method, target, aiConfig)
+              }
+              onJoinRoom={(code, name, cardBack) => onJoinRoom?.(code, name, cardBack)}
+            />
           ) : (
             <div className="space-y-6">
               <div className="flex items-center justify-center gap-3 p-4 glass rounded-lg border border-gold/20">
