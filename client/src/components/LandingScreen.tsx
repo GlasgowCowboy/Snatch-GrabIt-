@@ -18,6 +18,7 @@ import {
 import { ScoringMethod } from '@shared/schema';
 import { AIDifficulty } from '@shared/aiPlayer';
 import PendingInvites from './PendingInvites';
+import PlayerDashboard from './PlayerDashboard';
 
 /**
  * Multi-step landing replacing the old "one giant form" screen.
@@ -137,19 +138,34 @@ export default function LandingScreen({
 
   // ── Step renderers ───────────────────────────────────────────────────────
 
-  const renderChoose = () => (
-    <div className="space-y-5">
-      <Hero />
+  const renderChoose = () => {
+    // Logged-in players see the rich dashboard (recent games, rank, chips,
+    // credits). Guests see the lean three-path intro plus the value prop.
+    if (isLoggedIn) {
+      return (
+        <PlayerDashboard
+          onNewGame={() => setStep('setup')}
+          onJoinCode={() => setStep('code')}
+          onAcceptInvite={(code) => {
+            setJoinCode(code);
+            setStep('code');
+          }}
+        />
+      );
+    }
 
-      <PendingInvites
-        onAccept={(code) => {
-          setJoinCode(code);
-          setStep(isLoggedIn ? 'code' : 'identity-join');
-        }}
-      />
+    return (
+      <div className="space-y-5">
+        <Hero />
 
-      <div className="space-y-3">
-        {!isLoggedIn && (
+        <PendingInvites
+          onAccept={(code) => {
+            setJoinCode(code);
+            setStep('identity-join');
+          }}
+        />
+
+        <div className="space-y-3">
           <PathCard
             icon={<UserCircle className="w-5 h-5" />}
             title="Sign in / create account"
@@ -158,32 +174,28 @@ export default function LandingScreen({
             testid="path-signin"
             onClick={() => navigate('/auth')}
           />
-        )}
 
-        <PathCard
-          icon={<Sparkles className="w-5 h-5" />}
-          title={isLoggedIn ? 'New game' : 'Quick play as guest'}
-          sub={
-            isLoggedIn
-              ? 'Set up a new game vs AI or invite friends.'
-              : 'Jump in without an account. No chips, no stats — just play.'
-          }
-          accent="emerald"
-          testid="path-create"
-          onClick={() => setStep(isLoggedIn ? 'setup' : 'identity-create')}
-        />
+          <PathCard
+            icon={<Sparkles className="w-5 h-5" />}
+            title="Quick play as guest"
+            sub="Jump in without an account. No chips, no stats — just play."
+            accent="emerald"
+            testid="path-create"
+            onClick={() => setStep('identity-create')}
+          />
 
-        <PathCard
-          icon={<Hash className="w-5 h-5" />}
-          title="Join with a code"
-          sub="A friend sent you a 6-character room code? Paste it here."
-          accent="cyan"
-          testid="path-join"
-          onClick={() => setStep(isLoggedIn ? 'code' : 'identity-join')}
-        />
+          <PathCard
+            icon={<Hash className="w-5 h-5" />}
+            title="Join with a code"
+            sub="A friend sent you a 6-character room code? Paste it here."
+            accent="cyan"
+            testid="path-join"
+            onClick={() => setStep('identity-join')}
+          />
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderIdentity = (nextStep: 'setup' | 'code') => (
     <div className="space-y-5">
