@@ -11,7 +11,7 @@ import AccountDropdown from './AccountDropdown';
 import ThemeToggle from './ThemeToggle';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Trophy, LogOut, MessageSquare, Wifi, WifiOff, Flame } from 'lucide-react';
+import { Trophy, LogOut, MessageSquare, Wifi, WifiOff, Flame, Pause, Play } from 'lucide-react';
 import Logo from './Logo';
 import CreditBadge from './CreditBadge';
 import ChipsBadge from './ChipsBadge';
@@ -391,6 +391,34 @@ export default function GameBoardInteractive({
 
   return (
     <div className="min-h-screen felt-bg p-4">
+      {effectiveState.pause && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/55 backdrop-blur-sm flex items-center justify-center pointer-events-auto"
+          data-testid="pause-overlay"
+        >
+          <div className="glass-strong rounded-2xl border border-gold/30 p-8 max-w-sm w-full mx-4 text-center space-y-4">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-sky-500/15 border border-sky-500/40">
+              <Pause className="w-7 h-7 text-sky-300" />
+            </div>
+            <h2 className="text-2xl font-bold text-gradient-gold">Game paused</h2>
+            <p className="text-sm text-gold-light/70">
+              {effectiveState.pause.reason === 'auto-disconnect'
+                ? 'Waiting for a player to reconnect. The game will resume automatically once they’re back.'
+                : `Paused by ${
+                    effectiveState.players.find((p) => p.id === effectiveState.pause?.by)?.name ?? 'someone'
+                  }. Any player can resume.`}
+            </p>
+            <Button
+              className="btn-gold w-full"
+              onClick={() => sendMove({ type: 'resume-game' })}
+              data-testid="button-resume-from-overlay"
+            >
+              <Play className="w-4 h-4 mr-2" />
+              Resume
+            </Button>
+          </div>
+        </div>
+      )}
       {ghostCard && mouse && (
         <div
           className="fixed pointer-events-none z-[9998] opacity-90"
@@ -485,6 +513,34 @@ export default function GameBoardInteractive({
               >
                 <Flame className="w-4 h-4 mr-2" />
                 Burn
+              </Button>
+            )}
+            {effectiveState.status === 'playing' && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  sendMove({ type: effectiveState.pause ? 'resume-game' : 'pause-game' })
+                }
+                data-testid={effectiveState.pause ? 'button-resume-game' : 'button-pause-game'}
+                className="border-sky-500/40 text-sky-300 hover:bg-sky-500/10"
+                title={
+                  effectiveState.pause
+                    ? 'Resume the game.'
+                    : 'Pause the game. Any player can resume.'
+                }
+              >
+                {effectiveState.pause ? (
+                  <>
+                    <Play className="w-4 h-4 mr-2" />
+                    Resume
+                  </>
+                ) : (
+                  <>
+                    <Pause className="w-4 h-4 mr-2" />
+                    Pause
+                  </>
+                )}
               </Button>
             )}
             <Button

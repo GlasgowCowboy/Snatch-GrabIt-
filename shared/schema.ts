@@ -313,6 +313,19 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+/**
+ * Per-game pause record. Manual = a player tapped the Pause button.
+ * Auto    = a human player's WS dropped and the server stepped in so the
+ *           remaining players aren't forced to forfeit by a flaky network.
+ */
+export interface PauseInfo {
+  reason: 'manual' | 'auto-disconnect';
+  /** playerId of whoever initiated, or 'system' for auto-disconnect. */
+  by: string;
+  /** ms epoch — used for "Paused 1m 24s" labels on the overlay. */
+  at: number;
+}
+
 export interface GameState {
   id: string;
   players: PlayerState[];
@@ -322,5 +335,7 @@ export interface GameState {
   roundResults?: RoundResult[];
   winnerId?: string; // Player who won the game (reached target score)
   declaredOutId?: string; // Player who declared out this round
+  /** When set, all non-resume moves are rejected and AI timers are stopped. */
+  pause?: PauseInfo;
   chatMessages?: ChatMessage[];
 }

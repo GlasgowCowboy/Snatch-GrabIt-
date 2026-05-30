@@ -1,4 +1,4 @@
-import type { Card, Rank, GameState, PlayerState, RoundResult, ScoringSettings } from './schema';
+import type { Card, Rank, GameState, PlayerState, RoundResult, ScoringSettings, PauseInfo } from './schema';
 import { generateDeck, dealCards, NEW_FOUNDATION_INDEX, RANKS } from './deckUtils';
 // Re-export for callers (engine is the public surface for game logic).
 export { NEW_FOUNDATION_INDEX, RANKS } from './deckUtils';
@@ -16,7 +16,12 @@ export type GameMove =
   | { type: 'declare-out' }
   // Unstick action: take a card from currentDraw and put it back at the bottom
   // of the draw pile. Changes what the next flip-3 reveals. No vote, no penalty.
-  | { type: 'burn-draw-card'; drawCardIndex: number };
+  | { type: 'burn-draw-card'; drawCardIndex: number }
+  // Mid-game break. Any player can pause; any player can resume. While paused
+  // every other move is rejected. AI timers stop. Auto-pause on disconnect is
+  // applied via applyAutoPause/applyAutoResume below (not a move).
+  | { type: 'pause-game' }
+  | { type: 'resume-game' };
 
 export interface MoveResult {
   newState: GameState;
@@ -99,6 +104,11 @@ export function executeMove(state: GameState, playerId: string, move: GameMove):
     return { newState: state, error: 'Game is not in playing state' };
   }
 
+  // Gate: while the game is paused only the resume move is allowed.
+  if (state.pause && move.type !== 'resume-game') {
+    return { newState: state, error: 'Game is paused' };
+  }
+
   const newState = cloneState(state);
   const player = newState.players.find(p => p.id === playerId);
   if (!player) {
@@ -106,6 +116,14 @@ export function executeMove(state: GameState, playerId: string, move: GameMove):
   }
 
   switch (move.type) {
+    case 'pause-game':
+      newState.pause = { reason: 'manual', by: player.id, at: Date.now() };
+      return { newState };
+
+    case 'resume-game':
+      newState.pause = undefined;
+      return { newState };
+
     case 'declare-out':
       return executeDeclareOut(newState, player);
 
@@ -366,6 +384,34 @@ function executeDrawPile(state: GameState, player: PlayerState): MoveResult {
   return { newState: state };
 }
 
+// ── Auto-pause (server-driven, not a player move) ───────────────────────────
+
+/**
+ * Server calls this when a previously-connected human player drops their WS.
+ * Pure function — returns the same state with a pause attached. If the game
+ * is already paused (manual or otherwise) we don't stomp on the existing
+ * pause record.
+ */
+export function applyAutoPause(state: GameState): GameState {
+  if (state.pause) return state;
+  if (state.status !== 'playing') return state;
+  return {
+    ...state,
+    pause: { reason: 'auto-disconnect', by: 'system', at: Date.now() },
+  };
+}
+
+/**
+ * Server calls this when the disconnected player comes back. We ONLY lift an
+ * auto-disconnect pause — if a human pressed Pause manually, only a manual
+ * Resume move clears it.
+ */
+export function applyAutoResume(state: GameState): GameState {
+  if (!state.pause) return state;
+  if (state.pause.reason !== 'auto-disconnect') return state;
+  return { ...state, pause: undefined };
+}
+
 // ── Burn (per-player unstick) ───────────────────────────────────────────────
 
 /**
@@ -445,6 +491,7 @@ export function startNewRound(state: GameState): GameState {
   newState.foundations = [];
   newState.roundResults = undefined;
   newState.declaredOutId = undefined;
+  newState.pause = undefined;
   newState.status = 'playing';
 
   return newState;

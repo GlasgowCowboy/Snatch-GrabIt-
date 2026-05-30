@@ -2,7 +2,7 @@ import type { Server as HttpServer, IncomingMessage } from "http";
 import type { Duplex } from "stream";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "crypto";
-import { executeMove, startNewRound } from "@shared/gameEngine";
+import { executeMove, startNewRound, applyAutoPause, applyAutoResume } from "@shared/gameEngine";
 import { AIPlayer, type AIDifficulty } from "@shared/aiPlayer";
 import type { ChatMessage, GameState } from "@shared/schema";
 import type { ClientMessage, ServerMessage } from "@shared/wsMessages";
@@ -35,6 +35,11 @@ class GameSocketServer {
   // clear stale handles when a timer fires — preventing the O(N-rounds) timer
   // multiplication that caused the server hang.
   private aiTimersByRoom = new Map<string, Set<NodeJS.Timeout>>();
+  // Per-room set of human playerIds we've seen connected at least once. Used
+  // to distinguish "dropped mid-game" (auto-pause trigger) from "hasn't joined
+  // yet" (no auto-pause — we shouldn't freeze the room before the lobby even
+  // fills). Restored rooms pre-populate this from the persisted players list.
+  private everConnectedHumansByRoom = new Map<string, Set<string>>();
 
   constructor() {
     this.wss = new WebSocketServer({ noServer: true });
@@ -84,8 +89,22 @@ class GameSocketServer {
    * Called once on server boot for each room restored from the DB. Re-arms AI
    * timers without re-broadcasting (no clients are connected yet) and without
    * the lobby setup work onGameStarted does.
+   *
+   * Crucially we pre-populate everConnectedHumansByRoom with the human players
+   * who were here pre-crash. That way the auto-pause kicks in until they
+   * reconnect — AI doesn't get to race through moves while humans are away.
    */
   onRoomRestored(room: Room) {
+    const seen = new Set<string>();
+    room.players.forEach((p) => {
+      if (!p.isAI) seen.add(p.id);
+    });
+    this.everConnectedHumansByRoom.set(room.code, seen);
+    // Auto-pause now (no one is currently connected). The first presence
+    // broadcast on the first reconnect will lift this if everyone returns.
+    if (room.gameState && room.gameState.status === 'playing' && seen.size > 0) {
+      room.gameState = applyAutoPause(room.gameState);
+    }
     if (!room.aiConfig || !room.gameState || room.gameState.status !== 'playing') return;
     const aiPlayers = room.players.filter((p) => p.isAI);
     aiPlayers.forEach((p) => this.scheduleAIMove(room.code, p.id, room.aiConfig!.difficulty));
@@ -118,8 +137,14 @@ class GameSocketServer {
       });
       if (set.size === 0) this.connectionsByRoom.delete(code);
     }
+    // Drop them from the "ever-connected" set too. They deliberately left,
+    // so they shouldn't trigger auto-pause on subsequent disconnects.
+    this.everConnectedHumansByRoom.get(code)?.delete(playerId);
     const room = roomManager.getRoom(code);
-    if (!room) return;
+    if (!room) {
+      this.everConnectedHumansByRoom.delete(code);
+      return;
+    }
     this.broadcastRoom(code);
     if (room.gameState) this.broadcastState(code);
   }
@@ -140,6 +165,15 @@ class GameSocketServer {
     const set = this.connectionsByRoom.get(code) ?? new Set();
     set.add(conn);
     this.connectionsByRoom.set(code, set);
+
+    // Remember this player has been here — gates auto-pause to "dropped
+    // mid-game" only, not "hasn't joined yet".
+    const player = room.players.find((p) => p.id === playerId);
+    if (player && !player.isAI) {
+      const seen = this.everConnectedHumansByRoom.get(code) ?? new Set<string>();
+      seen.add(playerId);
+      this.everConnectedHumansByRoom.set(code, seen);
+    }
 
     // Mark as alive so the heartbeat doesn't immediately kill it.
     (ws as LiveWS).isAlive = true;
@@ -181,6 +215,27 @@ class GameSocketServer {
       .map((p) => p.id);
     const payload: ServerMessage = { type: "presence", disconnectedPlayerIds };
     conns?.forEach((conn) => this.send(conn.ws, payload));
+
+    // Auto-pause / auto-resume on connection state CHANGES (mid-game), not
+    // the initial fill of the lobby. We only treat a player as "dropped" if
+    // they have actually been connected at least once — that keeps the room
+    // playable during the first few seconds of joining and stops integration
+    // tests from seeing a pause flicker before they've finished connecting.
+    if (room.gameState && room.gameState.status === 'playing') {
+      const everConnected = this.everConnectedHumansByRoom.get(code) ?? new Set<string>();
+      const droppedMidGame = room.players.some(
+        (p) => !p.isAI && everConnected.has(p.id) && !connectedIds.has(p.id),
+      );
+      const wasPaused = !!room.gameState.pause;
+      const next = droppedMidGame
+        ? applyAutoPause(room.gameState)
+        : applyAutoResume(room.gameState);
+      const nowPaused = !!next.pause;
+      if (wasPaused !== nowPaused || next !== room.gameState) {
+        room.gameState = next;
+        this.broadcastState(code);
+      }
+    }
   }
 
   private onMessage(code: string, conn: Conn, raw: string) {
@@ -304,6 +359,13 @@ class GameSocketServer {
   private runAIMove(code: string, aiPlayerId: string, difficulty: AIDifficulty) {
     const room = roomManager.getRoom(code);
     if (!room || !room.gameState || room.gameState.status !== "playing") return;
+
+    // Pause gate: don't push moves while the game is frozen. Re-schedule
+    // ourselves so we wake back up as soon as humans resume.
+    if (room.gameState.pause) {
+      this.scheduleAIMove(code, aiPlayerId, difficulty);
+      return;
+    }
 
     const ai = new AIPlayer(difficulty);
     const primary = ai.getBestMove(aiPlayerId, room.gameState) ?? { type: "draw-pile" as const };
