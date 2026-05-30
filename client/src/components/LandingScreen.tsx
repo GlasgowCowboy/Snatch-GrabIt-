@@ -48,6 +48,7 @@ interface LandingScreenProps {
     scoringMethod: ScoringMethod,
     targetScore: number,
     aiConfig?: { numAI: number; difficulty: AIDifficulty },
+    durationSec?: number,
   ) => void;
   onJoinRoom: (
     roomCode: string,
@@ -84,6 +85,10 @@ export default function LandingScreen({
   const [joinCode, setJoinCode] = useState<string>(initialJoinCode?.toUpperCase() ?? '');
   const [scoringMethod, setScoringMethod] = useState<ScoringMethod>('fullHand');
   const [targetScore, setTargetScore] = useState<number>(50);
+  // 'timed' games: duration in seconds. Stored separately from targetScore
+  // because the engine ignores targetScore in timed mode but we still ship a
+  // value for it (server type expects a number).
+  const [durationSec, setDurationSec] = useState<number>(5 * 60);
   const [playVsAI, setPlayVsAI] = useState(false);
   const [numAI, setNumAI] = useState(2);
   const [aiDifficulty, setAIDifficulty] = useState<AIDifficulty>('medium');
@@ -321,37 +326,56 @@ export default function LandingScreen({
           <SelectContent>
             <SelectItem value="fullHand">Full Hand Scoring (Complex)</SelectItem>
             <SelectItem value="round">Round Scoring (Simple)</SelectItem>
+            <SelectItem value="timed">Timed (Race against a clock)</SelectItem>
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
           {scoringMethod === 'fullHand'
             ? 'Foundation cards (+1), Remaining cards (-2 each). First out gets +5 bonus.'
-            : 'First player to go out gets 1 point per round.'}
+            : scoringMethod === 'round'
+            ? 'First player to go out gets 1 point per round.'
+            : 'Same scoring as Full Hand, but the GAME ends when the clock hits zero. Highest cumulative score wins. Rounds auto-deal after a brief pause.'}
         </p>
       </div>
 
-      <div className="space-y-2">
-        <Label>Target score</Label>
-        <Select value={targetScore.toString()} onValueChange={(value) => setTargetScore(Number(value))}>
-          <SelectTrigger data-testid="select-target-score">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {scoringMethod === 'fullHand' ? (
-              <>
-                <SelectItem value="50">50 Points (Short Game)</SelectItem>
-                <SelectItem value="100">100 Points (Medium Game)</SelectItem>
-                <SelectItem value="150">150 Points (Long Game)</SelectItem>
-              </>
-            ) : (
-              <>
-                <SelectItem value="3">First to 3 Rounds</SelectItem>
-                <SelectItem value="5">First to 5 Rounds</SelectItem>
-              </>
-            )}
-          </SelectContent>
-        </Select>
-      </div>
+      {scoringMethod === 'timed' ? (
+        <div className="space-y-2">
+          <Label>Game length</Label>
+          <Select value={String(durationSec)} onValueChange={(value) => setDurationSec(Number(value))}>
+            <SelectTrigger data-testid="select-duration">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="300">5 minutes (Quick)</SelectItem>
+              <SelectItem value="600">10 minutes (Standard)</SelectItem>
+              <SelectItem value="900">15 minutes (Long)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <Label>Target score</Label>
+          <Select value={targetScore.toString()} onValueChange={(value) => setTargetScore(Number(value))}>
+            <SelectTrigger data-testid="select-target-score">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {scoringMethod === 'fullHand' ? (
+                <>
+                  <SelectItem value="50">50 Points (Short Game)</SelectItem>
+                  <SelectItem value="100">100 Points (Medium Game)</SelectItem>
+                  <SelectItem value="150">150 Points (Long Game)</SelectItem>
+                </>
+              ) : (
+                <>
+                  <SelectItem value="3">First to 3 Rounds</SelectItem>
+                  <SelectItem value="5">First to 5 Rounds</SelectItem>
+                </>
+              )}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       <div className="space-y-3 p-4 glass rounded-lg border border-gold/15">
         <div className="flex items-center justify-between">
@@ -415,6 +439,7 @@ export default function LandingScreen({
             scoringMethod,
             targetScore,
             playVsAI ? { numAI, difficulty: aiDifficulty } : undefined,
+            scoringMethod === 'timed' ? durationSec : undefined,
           )
         }
         disabled={!playerName.trim()}

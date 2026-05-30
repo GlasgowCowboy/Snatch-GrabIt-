@@ -68,6 +68,7 @@ export default function Home() {
       cardBackImage?: string;
       scoringMethod: ScoringMethod;
       targetScore: number;
+      durationSec?: number;
       aiConfig?: { numAI: number; difficulty: AIDifficulty };
     }) => {
       const res = await apiRequest('POST', '/api/rooms', input);
@@ -139,12 +140,14 @@ export default function Home() {
     scoringMethodParam?: ScoringMethod,
     targetScoreParam?: number,
     aiConfigParam?: { numAI: number; difficulty: AIDifficulty },
+    durationSecParam?: number,
   ) => {
     createRoomMutation.mutate({
       playerName,
       cardBackImage: cardBackImage || undefined,
       scoringMethod: scoringMethodParam ?? 'fullHand',
       targetScore: targetScoreParam ?? 50,
+      durationSec: durationSecParam,
       aiConfig: aiConfigParam,
     });
   };

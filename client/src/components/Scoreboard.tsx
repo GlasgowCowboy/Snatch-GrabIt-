@@ -44,6 +44,7 @@ function ScoreboardComponent({
   const isFullHand = scoringSettings.method === 'fullHand';
   const sortedResults = [...roundResults].sort((a, b) => b.totalScore - a.totalScore);
   const hasConfettiFired = useRef(false);
+  const hasRoundConfettiFired = useRef(false);
 
   // Fetch the authenticated player's updated global rank after game ends
   const { data: rankData } = useQuery<RankData>({
@@ -54,7 +55,7 @@ function ScoreboardComponent({
     staleTime: 0,
   });
 
-  // Fire confetti once when the winner's scoreboard appears
+  // Fire confetti once when the winner's scoreboard appears (game over).
   useEffect(() => {
     if (!gameOver || hasConfettiFired.current) return;
     hasConfettiFired.current = true;
@@ -82,6 +83,22 @@ function ScoreboardComponent({
       if (Date.now() < end) requestAnimationFrame(frame);
     })();
   }, [gameOver]);
+
+  // Smaller confetti burst on round-end declare-out (between rounds). Lighter
+  // than game-over so it doesn't feel out of proportion to the moment.
+  useEffect(() => {
+    if (gameOver || hasRoundConfettiFired.current) return;
+    const declarer = roundResults.find((r) => r.declaredOut);
+    if (!declarer) return;
+    hasRoundConfettiFired.current = true;
+    confetti({
+      particleCount: 40,
+      spread: 70,
+      origin: { y: 0.4 },
+      colors: ['#f5c542', '#ffd700', '#ffffff'],
+      zIndex: 10100,
+    });
+  }, [gameOver, roundResults]);
 
   return (
     <div

@@ -2,7 +2,7 @@ import type { Server as HttpServer, IncomingMessage } from "http";
 import type { Duplex } from "stream";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "crypto";
-import { executeMove, startNewRound, applyAutoPause, applyAutoResume } from "@shared/gameEngine";
+import { executeMove, startNewRound, applyAutoPause, applyAutoResume, applyTimeUp } from "@shared/gameEngine";
 import { AIPlayer, type AIDifficulty } from "@shared/aiPlayer";
 import type { ChatMessage, GameState } from "@shared/schema";
 import type { ClientMessage, ServerMessage } from "@shared/wsMessages";
@@ -40,6 +40,9 @@ class GameSocketServer {
   // yet" (no auto-pause — we shouldn't freeze the room before the lobby even
   // fills). Restored rooms pre-populate this from the persisted players list.
   private everConnectedHumansByRoom = new Map<string, Set<string>>();
+  // Per-room countdown handle for 'timed' games. One timeout per room that
+  // fires when endsAt passes and freezes the game.
+  private gameClockTimers = new Map<string, NodeJS.Timeout>();
 
   constructor() {
     this.wss = new WebSocketServer({ noServer: true });
@@ -78,11 +81,78 @@ class GameSocketServer {
   /** Start AI move scheduling when a game enters 'playing' status. */
   onGameStarted(room: Room) {
     this.clearAITimers(room.code);
+    // For timed games: stamp endsAt and arm the countdown.
+    if (
+      room.gameState &&
+      room.gameState.scoringSettings.method === 'timed' &&
+      room.gameState.scoringSettings.durationSec &&
+      !room.gameState.endsAt
+    ) {
+      room.gameState.endsAt = Date.now() + room.gameState.scoringSettings.durationSec * 1000;
+      this.armGameClock(room.code);
+    }
     this.broadcastRoom(room.code);
     if (room.gameState) this.broadcastState(room.code);
     if (!room.aiConfig) return;
     const aiPlayers = room.players.filter((p) => p.isAI);
     aiPlayers.forEach((p) => this.scheduleAIMove(room.code, p.id, room.aiConfig!.difficulty));
+  }
+
+  /** Schedule a one-shot timer that calls applyTimeUp when endsAt passes. */
+  private armGameClock(code: string) {
+    this.clearGameClock(code);
+    const room = roomManager.getRoom(code);
+    if (!room || !room.gameState?.endsAt) return;
+    const delay = Math.max(0, room.gameState.endsAt - Date.now());
+    const timer = setTimeout(() => {
+      this.gameClockTimers.delete(code);
+      const r = roomManager.getRoom(code);
+      if (!r || !r.gameState || r.gameState.status === 'gameOver') return;
+      r.gameState = applyTimeUp(r.gameState);
+      this.clearAITimers(code);
+      this.broadcastState(code);
+      // Finalize / settle so the timed-game result still flows into history +
+      // bets + credits, matching the declare-out path in onMessage.
+      const userIdByPlayerId = new Map(r.players.map((p) => [p.id, p.userId ?? null]));
+      void finalizeFinishedGame(r.gameDbId, r.gameState, userIdByPlayerId)
+        .then(() => settleGameBets(r.gameDbId))
+        .catch((err) => log(`finalize-on-timeout failed for ${r.gameDbId}: ${err}`));
+    }, delay);
+    this.gameClockTimers.set(code, timer);
+  }
+
+  private clearGameClock(code: string) {
+    const timer = this.gameClockTimers.get(code);
+    if (timer) clearTimeout(timer);
+    this.gameClockTimers.delete(code);
+  }
+
+  /**
+   * Timed games auto-deal the next round after a brief scoreboard pause.
+   * Players don't have to tap Next Round — the clock is the constraint.
+   * Skips if the game has already ended (declare-out → timeout race) or if
+   * the room state changed before the timeout fired.
+   */
+  private static readonly TIMED_INTER_ROUND_MS = 4000;
+  private scheduleTimedNextRound(code: string) {
+    setTimeout(() => {
+      const room = roomManager.getRoom(code);
+      if (!room || !room.gameState) return;
+      if (room.gameState.status !== 'roundEnded') return;
+      if (room.gameState.scoringSettings.method !== 'timed') return;
+      if (room.gameState.endsAt && Date.now() >= room.gameState.endsAt) return;
+      this.clearAITimers(code);
+      const endsAt = room.gameState.endsAt;
+      room.gameState = startNewRound(room.gameState);
+      // startNewRound rebuilds players + status; re-stamp the clock end time.
+      if (endsAt) room.gameState.endsAt = endsAt;
+      this.broadcastState(code);
+      if (room.aiConfig) {
+        room.players
+          .filter((p) => p.isAI)
+          .forEach((p) => this.scheduleAIMove(code, p.id, room.aiConfig!.difficulty));
+      }
+    }, GameSocketServer.TIMED_INTER_ROUND_MS);
   }
 
   /**
@@ -288,6 +358,7 @@ class GameSocketServer {
           }
 
           this.broadcastState(code);
+          this.clearGameClock(code);
 
           const gameDbId = room.gameDbId;
           const state = room.gameState;
@@ -296,6 +367,19 @@ class GameSocketServer {
             .catch((err) => log(`failed to finalize game ${gameDbId}: ${err}`));
         } else {
           this.broadcastState(code);
+
+          // Timed games auto-advance to the next round on declare-out so
+          // players can rack up multiple rounds before the clock hits zero.
+          // We show the scoreboard briefly then deal a fresh round.
+          if (
+            prevStatus === 'playing' &&
+            room.gameState.status === 'roundEnded' &&
+            room.gameState.scoringSettings.method === 'timed' &&
+            room.gameState.endsAt &&
+            Date.now() < room.gameState.endsAt
+          ) {
+            this.scheduleTimedNextRound(code);
+          }
         }
         break;
       }

@@ -285,11 +285,20 @@ export interface FoundationPile {
   cards: Card[];
 }
 
-export type ScoringMethod = 'fullHand' | 'round';
+export type ScoringMethod = 'fullHand' | 'round' | 'timed';
 
 export interface ScoringSettings {
   method: ScoringMethod;
-  targetScore: number; // 50/100/150 for fullHand, 3/5 for round
+  /**
+   * For 'fullHand': points target (50/100/150).
+   * For 'round': rounds-won target (3/5).
+   * For 'timed': not used — the game ends when the clock hits 0. We keep the
+   * field on the type so existing UI / DB code that always passes a value
+   * stays valid; the engine ignores it in timed mode.
+   */
+  targetScore: number;
+  /** Game-clock duration in seconds. Only meaningful for 'timed' games. */
+  durationSec?: number;
 }
 
 export interface RoundResult {
@@ -337,5 +346,13 @@ export interface GameState {
   declaredOutId?: string; // Player who declared out this round
   /** When set, all non-resume moves are rejected and AI timers are stopped. */
   pause?: PauseInfo;
+  /**
+   * For 'timed' games only: ms-since-epoch at which the clock hits zero and
+   * the game ends. Set by the server when the game starts. Clients tick
+   * against this locally so we don't have to broadcast the remaining time
+   * every second. Pause subtracts from the wall-clock countdown server-side
+   * but for client display we just freeze the count while paused.
+   */
+  endsAt?: number;
   chatMessages?: ChatMessage[];
 }

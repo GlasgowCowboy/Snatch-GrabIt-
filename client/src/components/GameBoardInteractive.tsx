@@ -9,6 +9,7 @@ import GameChat from './GameChat';
 import ScoreboardTicker from './ScoreboardTicker';
 import AccountDropdown from './AccountDropdown';
 import ThemeToggle from './ThemeToggle';
+import GameClockBadge from './GameClockBadge';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Trophy, LogOut, MessageSquare, Wifi, WifiOff, Flame, Pause, Play } from 'lucide-react';
@@ -456,6 +457,9 @@ export default function GameBoardInteractive({
             <Logo size={26} className="text-gold" />
             <h1 className="text-xl md:text-2xl font-bold text-gradient-gold">Snatch&GrabIt!</h1>
             <SponsorBadge />
+            {effectiveState.endsAt && (
+              <GameClockBadge endsAt={effectiveState.endsAt} paused={!!effectiveState.pause} />
+            )}
             {winner && (
               <Badge variant="default" className="flex items-center gap-2">
                 <Trophy className="w-4 h-4" />

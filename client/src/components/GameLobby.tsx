@@ -44,7 +44,7 @@ interface GameLobbyProps {
   /** PlayerIds whose WS connection is currently dropped (server-derived). */
   disconnectedPlayerIds?: string[];
   initialJoinCode?: string; // Prefill the "join room" input from a deep link (?join=…)
-  onCreateRoom?: (playerName: string, cardBackImage?: string, scoringMethod?: ScoringMethod, targetScore?: number, aiConfig?: {numAI: number, difficulty: AIDifficulty}) => void;
+  onCreateRoom?: (playerName: string, cardBackImage?: string, scoringMethod?: ScoringMethod, targetScore?: number, aiConfig?: {numAI: number, difficulty: AIDifficulty}, durationSec?: number) => void;
   onJoinRoom?: (roomCode: string, playerName: string, cardBackImage?: string) => void;
   onStartGame?: () => void;
   onToggleReady?: () => void;
@@ -282,8 +282,8 @@ export default function GameLobby({
               isLoggedIn={!!user}
               profileDisplayName={profile?.displayName ?? undefined}
               profileCardBack={profile?.cardBackUrl ?? undefined}
-              onCreateRoom={(name, cardBack, method, target, aiConfig) =>
-                onCreateRoom?.(name, cardBack, method, target, aiConfig)
+              onCreateRoom={(name, cardBack, method, target, aiConfig, durationSec) =>
+                onCreateRoom?.(name, cardBack, method, target, aiConfig, durationSec)
               }
               onJoinRoom={(code, name, cardBack) => onJoinRoom?.(code, name, cardBack)}
             />

@@ -80,6 +80,8 @@ export default function GameChat({
     }
   };
 
+  const QUICK_REACTIONS = ['👍', '🔥', '😂', '😱', '🎉', '💀'] as const;
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex gap-2 mb-2 pb-2 border-b">
@@ -99,6 +101,24 @@ export default function GameChat({
         >
           <Send className="w-4 h-4" />
         </Button>
+      </div>
+
+      {/* Quick-reaction strip — one-tap emoji sends. Doesn't fight typed
+          messages, just gives players a fast "👍 nice move" affordance
+          without opening their phone keyboard. */}
+      <div className="flex flex-wrap gap-1.5 mb-2 pb-2 border-b">
+        {QUICK_REACTIONS.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            onClick={() => onSendMessage(emoji)}
+            className="h-9 w-9 text-lg rounded-md hover:bg-gold/10 active:scale-95 transition-transform"
+            title={`Send ${emoji}`}
+            data-testid={`button-emoji-${emoji}`}
+          >
+            {emoji}
+          </button>
+        ))}
       </div>
 
       <ScrollArea className="flex-1 pr-4" data-testid="chat-messages-area">

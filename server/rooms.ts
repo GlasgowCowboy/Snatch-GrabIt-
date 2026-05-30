@@ -45,6 +45,7 @@ export class RoomManager {
     cardBackImage?: string;
     scoringMethod: ScoringMethod;
     targetScore: number;
+    durationSec?: number;
     aiConfig?: AIConfig;
     userId?: string | null;
   }): Promise<{ room: Room; playerId: string }> {
@@ -76,6 +77,7 @@ export class RoomManager {
       players: [host, ...aiPlayers],
       scoringMethod: input.scoringMethod,
       targetScore: input.targetScore,
+      durationSec: input.durationSec,
       aiConfig: input.aiConfig,
       status: 'waiting',
       gameDbId: dbGame.id,
@@ -148,7 +150,7 @@ export class RoomManager {
         cardBackImage: p.cardBackImage,
         isAI: p.isAI,
       })),
-      { method: room.scoringMethod, targetScore: room.targetScore },
+      { method: room.scoringMethod, targetScore: room.targetScore, durationSec: room.durationSec },
     );
     room.status = 'playing';
     await storage.updateGame(room.gameDbId, { startedAt: new Date() });

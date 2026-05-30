@@ -175,13 +175,19 @@ function executeDeclareOut(state: GameState, player: PlayerState): MoveResult {
     p.roundScore = result.roundScore;
   }
 
-  // Check for game winner
-  const winner = state.players.find(p => p.score >= state.scoringSettings.targetScore);
-  if (winner) {
-    state.winnerId = winner.id;
-    state.status = 'gameOver';
-  } else {
+  // Check for game winner.
+  // - 'timed' games never end on a target score — only the clock ends them.
+  // - 'fullHand' and 'round' end as soon as anyone hits the target.
+  if (state.scoringSettings.method === 'timed') {
     state.status = 'roundEnded';
+  } else {
+    const winner = state.players.find(p => p.score >= state.scoringSettings.targetScore);
+    if (winner) {
+      state.winnerId = winner.id;
+      state.status = 'gameOver';
+    } else {
+      state.status = 'roundEnded';
+    }
   }
 
   return { newState: state };
@@ -384,6 +390,28 @@ function executeDrawPile(state: GameState, player: PlayerState): MoveResult {
   return { newState: state };
 }
 
+// ── Time-up (server-driven, timed games only) ───────────────────────────────
+
+/**
+ * Called by the server when a timed game's clock hits zero. Freezes the game
+ * with the current cumulative scores. Winner = player with highest totalScore
+ * (ties broken by playerId order, deterministic).
+ *
+ * If the game is mid-round when the clock fires, the in-progress round is
+ * NOT scored — only fully-completed rounds count. This is the simpler rule
+ * and avoids "I was about to declare!" complaints from a partial calculation.
+ */
+export function applyTimeUp(state: GameState): GameState {
+  if (state.status === 'gameOver') return state;
+  const sorted = [...state.players].sort((a, b) => b.score - a.score);
+  const winner = sorted[0];
+  return {
+    ...state,
+    status: 'gameOver',
+    winnerId: winner?.id,
+  };
+}
+
 // ── Auto-pause (server-driven, not a player move) ───────────────────────────
 
 /**
@@ -451,7 +479,10 @@ export function calculateRoundResults(state: GameState, declarerId: string): Rou
     const tableauRemaining = player.tableau.reduce((sum, col) => sum + col.length, 0);
 
     let roundScore = 0;
-    if (state.scoringSettings.method === 'fullHand') {
+    if (state.scoringSettings.method === 'fullHand' || state.scoringSettings.method === 'timed') {
+      // Timed games use the fullHand point math — what changes for timed is
+      // the *game end* condition (clock, not target). Per-round scoring is
+      // identical so the running totalScore is meaningful at any tick.
       roundScore = foundationCards - (bonePileRemaining * BONE_PILE_PENALTY);
       if (player.id === declarerId) {
         roundScore += DECLARE_OUT_SCORE_BONUS;

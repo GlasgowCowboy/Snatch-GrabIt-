@@ -25,6 +25,8 @@ export interface Room {
   players: RoomPlayer[];
   scoringMethod: ScoringMethod;
   targetScore: number;
+  /** Game-clock seconds for 'timed' mode (else undefined). */
+  durationSec?: number;
   aiConfig?: AIConfig;
   status: RoomStatus;
   gameState?: GameState;
@@ -37,8 +39,11 @@ export const MAX_PLAYERS_PER_ROOM = 8;
 export const createRoomBodySchema = z.object({
   playerName: z.string().min(1).max(50),
   cardBackImage: z.string().optional(),
-  scoringMethod: z.enum(['fullHand', 'round']),
+  scoringMethod: z.enum(['fullHand', 'round', 'timed']),
   targetScore: z.number().int().positive(),
+  // Optional — only used for 'timed' games. Bounded so a misclick can't
+  // start a 10-hour game.
+  durationSec: z.number().int().min(60).max(60 * 60).optional(),
   aiConfig: z
     .object({
       numAI: z.number().int().min(1).max(7),
