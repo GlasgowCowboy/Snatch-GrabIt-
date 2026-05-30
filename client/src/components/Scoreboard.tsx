@@ -3,7 +3,7 @@ import confetti from 'canvas-confetti';
 import { RoundResult, ScoringSettings } from '@shared/schema';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Trophy, Crown, Home, Sparkles, TrendingUp } from 'lucide-react';
+import { Trophy, Crown, Home, Sparkles, TrendingUp, LogOut } from 'lucide-react';
 import SponsorBanner from './SponsorBanner';
 import BetResultsPanel from './BetResultsPanel';
 import { useQuery } from '@tanstack/react-query';
@@ -23,6 +23,8 @@ interface ScoreboardProps {
   roundResults: RoundResult[];
   scoringSettings: ScoringSettings;
   onNextRound?: () => void;
+  /** Step out of the game cleanly. Shown between rounds + on game-over. */
+  onLeaveGame?: () => void;
   gameOver?: boolean;
   winnerId?: string;
   gameDbId?: string;
@@ -32,6 +34,7 @@ function ScoreboardComponent({
   roundResults,
   scoringSettings,
   onNextRound,
+  onLeaveGame,
   gameOver = false,
   winnerId,
   gameDbId,
@@ -176,6 +179,33 @@ function ScoreboardComponent({
                   </div>
                 </div>
 
+                {/* Progress bar towards the game target — visceral sense of
+                    how close everyone is to winning. fullHand games race to
+                    a positive score; round games race to a number of rounds
+                    won so the bar maps the running roundScore→target. */}
+                <div className="mb-2">
+                  {(() => {
+                    const target = scoringSettings.targetScore;
+                    const pct = Math.max(0, Math.min(100, (result.totalScore / target) * 100));
+                    const won = result.totalScore >= target;
+                    return (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-gold-light/50">
+                          <span>Toward {target}</span>
+                          <span>{Math.round(pct)}%</span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-gold/10 overflow-hidden">
+                          <div
+                            className={`h-full transition-all ${won ? 'bg-gradient-to-r from-amber-400 to-amber-500' : 'bg-gradient-to-r from-gold/70 to-gold'}`}
+                            style={{ width: `${pct}%` }}
+                            data-testid={`progress-${result.playerId}`}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
                 {/* Score Breakdown */}
                 <div className="mt-3 pt-3 border-t border-gold/10">
                   {isFullHand ? (
@@ -233,10 +263,10 @@ function ScoreboardComponent({
           {/* ── Sponsor Banner ── */}
           <SponsorBanner />
 
-          {/* ── Action Button ── */}
-          <div className="flex flex-col items-center gap-2 relative" style={{ zIndex: 10000 }}>
+          {/* ── Action buttons ── */}
+          <div className="relative" style={{ zIndex: 10000 }}>
             {gameOver ? (
-              <>
+              <div className="flex flex-col items-center gap-2">
                 <Button
                   size="lg"
                   onClick={onNextRound}
@@ -244,19 +274,35 @@ function ScoreboardComponent({
                   className="btn-gold pointer-events-auto cursor-pointer text-lg px-8 py-3 gap-2"
                 >
                   <Home className="w-5 h-5" />
-                  Back to Lobby
+                  Back to home
                 </Button>
                 <p className="text-xs text-gold-light/30">Review your results above before leaving</p>
-              </>
+              </div>
             ) : (
-              <Button
-                size="lg"
-                onClick={onNextRound}
-                data-testid="button-next-round"
-                className="btn-gold pointer-events-auto cursor-pointer text-lg px-8 py-3"
-              >
-                Next Round
-              </Button>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 pointer-events-auto">
+                {/* Leaving between rounds shouldn't be hidden behind a "X" —
+                    surface it as a real choice next to Next Round. */}
+                {onLeaveGame && (
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    onClick={onLeaveGame}
+                    data-testid="button-leave-game-from-scoreboard"
+                    className="glass border-white/15 text-gold-light/80 hover:border-gold/30 hover:bg-gold/5 gap-2"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Leave game
+                  </Button>
+                )}
+                <Button
+                  size="lg"
+                  onClick={onNextRound}
+                  data-testid="button-next-round"
+                  className="btn-gold cursor-pointer text-lg px-8 py-3"
+                >
+                  Next round
+                </Button>
+              </div>
             )}
           </div>
         </div>

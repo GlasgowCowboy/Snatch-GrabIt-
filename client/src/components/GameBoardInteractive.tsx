@@ -439,6 +439,7 @@ export default function GameBoardInteractive({
           roundResults={effectiveState.roundResults!}
           scoringSettings={effectiveState.scoringSettings}
           onNextRound={handleNextRound}
+          onLeaveGame={onLeaveGame}
           gameOver={effectiveState.status === 'gameOver'}
           winnerId={effectiveState.winnerId}
           gameDbId={gameDbId}
