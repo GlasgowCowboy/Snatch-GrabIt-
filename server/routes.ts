@@ -15,12 +15,15 @@ import {
   recordImpression,
   recordClick,
   getEngagementSnapshot,
+  isKnownSlot,
+  revertImpressionAward,
 } from "./ad-engagement";
 import {
   createPrintOrder,
   getPrintConfig,
   getPrintOrder,
   listOrdersForUser,
+  verifyOrderToken,
   PrintError,
 } from "./print";
 import { createPrintOrderSchema } from "@shared/print";
@@ -52,6 +55,28 @@ const inviteLimiter = rateLimit({
 // Key: userId  Value: timestamp of last successful grant
 const adGrantLastClaimed = new Map<string, number>();
 const AD_GRANT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+
+// Rate-limit click pings — even though clicks are auth-gated and slot-validated,
+// a single user firing thousands of POSTs/min would still pollute CTR.
+const adClickLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV !== 'production',
+  message: { message: 'Too many click pings — slow down.' },
+});
+
+// Per-IP cap on print-order intake. Orders cost staff time to triage in the
+// manual queue, and the in-memory Map has a hard size cap below.
+const printOrderLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV !== 'production',
+  message: { message: 'Too many orders submitted from this address. Try again later.' },
+});
 import {
   createRoomBodySchema,
   joinRoomBodySchema,
@@ -339,34 +364,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     slot: z.string().min(1).max(64),
   });
 
-  app.post("/api/ads/impression", async (req, res) => {
+  app.post("/api/ads/impression", async (req, res, next) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     try {
       const { slot } = adSlotBodySchema.parse(req.body);
-      const result = recordImpression(req.user!.id, slot);
+      // Allowlist check — without this, an authed user can POST 25 distinct
+      // fake slot IDs and farm the full daily passive-credit cap. The
+      // in-memory engagement maps would also grow unbounded.
+      if (!isKnownSlot(slot)) {
+        return res.status(400).json({ message: 'Unknown ad slot' });
+      }
+      const userId = req.user!.id;
+      const result = recordImpression(userId, slot);
       if (result.creditsAwarded > 0) {
-        await storage.grantCredits(req.user!.id, result.creditsAwarded);
+        try {
+          await storage.grantCredits(userId, result.creditsAwarded);
+        } catch (dbErr) {
+          // Roll back the in-memory mutation so the user's next call can
+          // retry instead of being silently shorted (the seen-set would
+          // otherwise still think this slot had been counted today).
+          revertImpressionAward(userId, slot, result.creditsAwarded);
+          throw dbErr;
+        }
       }
       res.json(result);
     } catch (e) {
       if (e instanceof z.ZodError) {
         return res.status(400).json({ message: 'Invalid request', errors: e.errors });
       }
-      throw e;
+      // Forward to Express error handler instead of throwing in an async
+      // handler (Express 4 doesn't await route promises).
+      return next(e);
     }
   });
 
-  app.post("/api/ads/click", (req, res) => {
-    // Anonymous clicks count too — engagement is per-slot, not per-user.
+  app.post("/api/ads/click", adClickLimiter, (req, res, next) => {
+    // Auth-gated — an unauthed click endpoint is a CTR-pollution vector, and
+    // CTR data drives the direct-sponsor pitch in /admin (#45).
+    if (!req.isAuthenticated()) return res.sendStatus(401);
     try {
       const { slot } = adSlotBodySchema.parse(req.body);
+      if (!isKnownSlot(slot)) {
+        return res.status(400).json({ message: 'Unknown ad slot' });
+      }
       recordClick(slot);
       res.sendStatus(204);
     } catch (e) {
       if (e instanceof z.ZodError) {
         return res.status(400).json({ message: 'Invalid request', errors: e.errors });
       }
-      throw e;
+      return next(e);
     }
   });
 
@@ -378,7 +425,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(getPrintConfig());
   });
 
-  app.post("/api/print/orders", (req, res) => {
+  app.post("/api/print/orders", printOrderLimiter, (req, res, next) => {
     try {
       const input = createPrintOrderSchema.parse(req.body);
       const userId = req.isAuthenticated() ? req.user!.id : null;
@@ -391,7 +438,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (e instanceof z.ZodError) {
         return res.status(400).json({ message: 'Invalid request', errors: e.errors });
       }
-      throw e;
+      return next(e);
     }
   });
 
@@ -401,16 +448,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/print/orders/:id", (req, res) => {
-    const order = getPrintOrder(req.params.id);
-    if (!order) return res.status(404).json({ message: 'Order not found' });
-    // Only the owner or admin can view a specific order. Guests can view
-    // their own only via the order-confirmation URL we return at creation —
-    // there isn't a guest auth handle here, so we 403 for now and route
-    // future guest lookups through a signed link.
-    const isOwner = req.isAuthenticated() && order.userId === req.user!.id;
-    const isAdmin = req.isAuthenticated() && req.user!.isAdmin;
-    if (!isOwner && !isAdmin) {
+    // Authorise BEFORE looking up the order so we don't reveal whether a
+    // given ID exists via the 404-vs-403 differential. Three accepted
+    // identities: (a) HMAC-signed ?token=... that matches the order's email,
+    // (b) authed session owning the order, (c) admin session.
+    const id = req.params.id;
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    const isAuthed = req.isAuthenticated();
+    const isAdmin = isAuthed && req.user!.isAdmin;
+
+    // Without any credential at all, refuse before touching the store.
+    if (!isAuthed && !token) {
+      return res.status(401).json({ message: 'Authentication or token required' });
+    }
+
+    const order = getPrintOrder(id);
+    // For unauthorized callers we return 403 whether or not the order exists
+    // (no existence oracle). Only admins get a distinct 404.
+    const tokenOk = !!token && !!order && verifyOrderToken(id, order.email, token);
+    const isOwner = isAuthed && !!order && order.userId === req.user!.id;
+
+    if (!isAdmin && !isOwner && !tokenOk) {
       return res.status(403).json({ message: 'Not authorized to view this order' });
+    }
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
     }
     res.json({ order });
   });

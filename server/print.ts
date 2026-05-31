@@ -12,7 +12,7 @@
  *     volume justifies the vendor integration cost.
  */
 
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import {
   PRINT_CATALOG,
   findPrintProduct,
@@ -22,7 +22,44 @@ import {
   type PrintOrderResponse,
 } from '@shared/print';
 
+// Hard ceiling on the in-memory order store. Until orders move to Postgres,
+// uncapped growth is a real OOM vector — a scripted POST loop fills the
+// process. When we hit the cap, we FIFO-evict the oldest order (Map iteration
+// order is insertion order) and log a warning so we notice before customers
+// start vanishing in production.
+const MAX_ORDERS_IN_MEMORY = 1000;
+
 const orders = new Map<string, PrintOrder>();
+
+/**
+ * Secret used to sign one-time order-lookup tokens for guests. In production
+ * set PRINT_ORDER_TOKEN_SECRET; in dev we fall back to a process-stable random
+ * value so tokens issued during one run can still be verified within that run
+ * (they break across restarts, which is fine for dev).
+ */
+const TOKEN_SECRET = process.env.PRINT_ORDER_TOKEN_SECRET ?? randomUUID();
+
+function signOrderToken(orderId: string, email: string): string {
+  return createHmac('sha256', TOKEN_SECRET)
+    .update(`${orderId}|${email.toLowerCase()}`)
+    .digest('hex')
+    .slice(0, 32); // 128 bits is plenty for a per-order capability token
+}
+
+/** Constant-time check so timing doesn't leak token bytes. */
+export function verifyOrderToken(
+  orderId: string,
+  email: string,
+  token: string,
+): boolean {
+  const expected = signOrderToken(orderId, email);
+  if (token.length !== expected.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(token));
+  } catch {
+    return false;
+  }
+}
 
 export function getPrintConfig(): PrintConfig {
   return {
@@ -57,7 +94,26 @@ export function createPrintOrder(
     createdAt: now,
     updatedAt: now,
   };
+  // FIFO-evict the oldest order if we've hit the cap. Map iteration order is
+  // insertion order, so .keys().next() gives us the oldest. The evicted order
+  // is GONE — this is intentional pressure-relief, not a complete fix; real
+  // persistence (TODO) is what removes the cap entirely.
+  if (orders.size >= MAX_ORDERS_IN_MEMORY) {
+    const oldest = orders.keys().next().value;
+    if (oldest) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[print] in-memory order cap (${MAX_ORDERS_IN_MEMORY}) hit — evicting ${oldest}`,
+      );
+      orders.delete(oldest);
+    }
+  }
   orders.set(order.id, order);
+
+  // Signed one-time token so guest customers can revisit their confirmation
+  // URL after closing the tab (the page itself only stores the order in
+  // React state). For authed users the lookup also works via session.
+  const lookupToken = signOrderToken(order.id, order.email);
 
   const cfg = getPrintConfig();
   if (!cfg.paymentsEnabled || !cfg.fulfilmentEnabled) {
@@ -65,6 +121,7 @@ export function createPrintOrder(
     order.status = 'awaiting_payment';
     return {
       order,
+      lookupToken,
       notice:
         "Your order is in our manual-fulfilment queue. We'll email you within 1 business day with payment and shipping next steps.",
     };
@@ -74,7 +131,7 @@ export function createPrintOrder(
   // order, return the session URL so the client redirects to Stripe. On
   // webhook 'checkout.session.completed', flip status to 'in_production' and
   // POST the order to the configured vendor.
-  return { order };
+  return { order, lookupToken };
 }
 
 export function getPrintOrder(id: string): PrintOrder | undefined {

@@ -3,6 +3,8 @@ import {
   recordImpression,
   recordClick,
   getEngagementSnapshot,
+  revertImpressionAward,
+  isKnownSlot,
   _resetAdEngagement,
 } from '../ad-engagement';
 
@@ -87,5 +89,36 @@ describe('ad-engagement', () => {
     expect(b.creditsAwarded).toBe(1);
     expect(a.dailyCreditsEarned).toBe(1);
     expect(b.dailyCreditsEarned).toBe(1);
+  });
+
+  it('isKnownSlot only accepts the three live slot IDs', () => {
+    expect(isKnownSlot('0000000001')).toBe(true);
+    expect(isKnownSlot('0000000002')).toBe(true);
+    expect(isKnownSlot('0000000003')).toBe(true);
+    expect(isKnownSlot('not-a-real-slot')).toBe(false);
+    expect(isKnownSlot('')).toBe(false);
+    // Whitespace, similar-looking IDs, etc.
+    expect(isKnownSlot('0000000001 ')).toBe(false);
+    expect(isKnownSlot('00000000010')).toBe(false);
+  });
+
+  it('revertImpressionAward undoes a credit so the user can retry', () => {
+    const award = recordImpression('u-alice', 'slot-x');
+    expect(award.creditsAwarded).toBe(1);
+
+    revertImpressionAward('u-alice', 'slot-x', 1);
+
+    // Now a fresh impression should award again (the seen-set was cleared).
+    const retry = recordImpression('u-alice', 'slot-x');
+    expect(retry.creditsAwarded).toBe(1);
+    expect(retry.dailyCreditsEarned).toBe(1);
+  });
+
+  it('revertImpressionAward is idempotent / safe to call on un-awarded state', () => {
+    // No prior impression — should not crash or go negative.
+    revertImpressionAward('u-alice', 'slot-x', 1);
+    revertImpressionAward('u-alice', 'slot-x', 1);
+    const after = recordImpression('u-alice', 'slot-x');
+    expect(after.dailyCreditsEarned).toBe(1);
   });
 });

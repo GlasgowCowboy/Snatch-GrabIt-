@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
 import { useToast } from '@/hooks/use-toast';
@@ -45,6 +45,44 @@ export default function PrintPage() {
 
   const [selectedProduct, setSelectedProduct] = useState<PrintProduct | null>(null);
   const [confirmed, setConfirmed] = useState<PrintOrderResponse | null>(null);
+
+  // Re-sync email when the auth user resolves. useState's initial value runs
+  // before useAuth's session check completes, so without this the field stays
+  // blank for logged-in users.
+  useEffect(() => {
+    if (user?.email) {
+      setForm((f) => (f.email ? f : { ...f, email: user.email! }));
+    }
+  }, [user?.email]);
+
+  // Guest lookup path: when /print?id=...&token=... is loaded, fetch the
+  // order and show the confirmation card. Lets a guest customer revisit their
+  // order after closing the browser tab.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('id');
+    const token = params.get('token');
+    if (!id || !token) return;
+    fetch(
+      `/api/print/orders/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`,
+      { credentials: 'include' },
+    )
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Lookup failed (${res.status})`);
+        const data = (await res.json()) as { order: PrintOrderResponse['order'] };
+        setConfirmed({ order: data.order });
+      })
+      .catch(() => {
+        toast({
+          title: "Couldn't load your order",
+          description: 'The link may have expired or the order is no longer available.',
+          variant: 'destructive',
+        });
+      });
+    // Eslint: toast is stable from the hook, safe to omit from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [form, setForm] = useState<CreatePrintOrderInput>({
     productId: '',
@@ -118,6 +156,15 @@ export default function PrintPage() {
               {confirmed.notice && (
                 <div className="rounded-lg border bg-muted/40 p-3 text-sm">
                   <p>{confirmed.notice}</p>
+                </div>
+              )}
+              {confirmed.lookupToken && (
+                <div className="rounded-lg border bg-muted/40 p-3 text-sm">
+                  <p className="font-medium mb-1">Save this link to revisit your order:</p>
+                  <code className="block break-all text-xs">
+                    {window.location.origin}/print/lookup?id={confirmed.order.id}
+                    &amp;token={confirmed.lookupToken}
+                  </code>
                 </div>
               )}
               <Button onClick={() => navigate('/')} className="w-full">

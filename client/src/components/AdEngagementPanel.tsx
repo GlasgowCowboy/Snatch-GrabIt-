@@ -79,8 +79,6 @@ export default function AdEngagementPanel() {
                 <tr className="border-b text-left">
                   <th className="py-2 pr-4">Slot</th>
                   <th className="py-2 pr-4 text-right">Impressions</th>
-                  <th className="py-2 pr-4 text-right">Clicks</th>
-                  <th className="py-2 pr-4 text-right">CTR</th>
                   <th className="py-2 pr-4 text-right">Action</th>
                 </tr>
               </thead>
@@ -99,12 +97,6 @@ export default function AdEngagementPanel() {
                       </td>
                       <td className="py-2 pr-4 text-right font-mono">
                         {s.impressions.toLocaleString()}
-                      </td>
-                      <td className="py-2 pr-4 text-right font-mono">
-                        {s.clicks.toLocaleString()}
-                      </td>
-                      <td className="py-2 pr-4 text-right font-mono">
-                        {s.ctr.toFixed(2)}%
                       </td>
                       <td className="py-2 pr-4 text-right">
                         {isCandidate ? (
@@ -140,6 +132,9 @@ export default function AdEngagementPanel() {
           Direct-pitch threshold: {PITCH_THRESHOLD_IMPRESSIONS} impressions/day.
           AdSense doesn't expose advertiser identity, so this signal is the
           best proxy we have for "is this slot worth the conversation."
+          Clicks aren't shown — AdSense iframes are cross-origin, so we can't
+          measure them client-side; for that data, pull the AdSense Reporting
+          API once we have a publisher token.
         </p>
       </CardContent>
     </Card>
@@ -148,6 +143,8 @@ export default function AdEngagementPanel() {
 
 function buildPitchMailto(s: SlotEngagement): string {
   const subject = `Direct sponsorship inquiry — ${describeSlot(s.slotId)} on Snatch&GrabIt!`;
+  // CRLF rather than LF — some mailto handlers (Outlook in particular)
+  // collapse bare LFs into spaces and render the bullets as one long line.
   const body = [
     'Hi,',
     '',
@@ -156,14 +153,12 @@ function buildPitchMailto(s: SlotEngagement): string {
     '',
     `  • Slot: ${describeSlot(s.slotId)} (${s.slotId})`,
     `  • Impressions: ${s.impressions.toLocaleString()}`,
-    `  • Clicks: ${s.clicks.toLocaleString()}`,
-    `  • CTR: ${s.ctr.toFixed(2)}%`,
     '',
     "We'd love to talk direct-sponsorship terms that beat what we",
     'currently see from AdSense.',
     '',
     'Best,',
     'The Snatch&GrabIt! team',
-  ].join('\n');
+  ].join('\r\n');
   return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }

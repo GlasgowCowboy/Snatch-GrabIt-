@@ -19,6 +19,23 @@ const PASSIVE_CREDIT_CAP_PER_DAY = 25; // max credits a user can earn from
 //                                          passive views in a single UTC day.
 const PASSIVE_CREDIT_PER_VIEW = 1; // 1 credit per first-view per slot per day.
 
+/**
+ * Only these slot IDs are accepted by recordImpression / recordClick.
+ * Must match the hardcoded `data-ad-slot` values in client/src/components/AdSlot.tsx.
+ * Anything else is treated as a forged client request — otherwise an authed
+ * user could POST 25 distinct fake slot IDs and farm the daily credit cap
+ * without ever rendering an ad.
+ */
+export const KNOWN_AD_SLOTS = new Set<string>([
+  '0000000001', // top banner
+  '0000000002', // bottom banner
+  '0000000003', // desktop skyscraper
+]);
+
+export function isKnownSlot(slotId: string): boolean {
+  return KNOWN_AD_SLOTS.has(slotId);
+}
+
 interface SlotStats {
   impressions: number;
   clicks: number;
@@ -122,6 +139,37 @@ export function getEngagementSnapshot(): SlotEngagement[] {
   });
   rows.sort((a, b) => b.impressions - a.impressions);
   return rows;
+}
+
+/**
+ * Roll back the in-memory mutations made by a successful recordImpression.
+ *
+ * Call this if storage.grantCredits throws — otherwise the seen-set still
+ * thinks the slot was counted, so the user's retry sees creditsAwarded=0
+ * and they're silently shorted that credit for the rest of the day.
+ *
+ * Idempotent: safe to call with stale userId/slotId — does nothing if the
+ * day has rolled over since the original call.
+ */
+export function revertImpressionAward(
+  userId: string,
+  slotId: string,
+  amount: number,
+): void {
+  // If the day rolled over between record + revert, the maps were cleared;
+  // nothing to undo.
+  if (utcDayKey() !== currentDayKey) return;
+
+  const seen = seenSlotsToday.get(userId);
+  if (seen?.has(slotId)) seen.delete(slotId);
+
+  const earned = dailyCreditsByUser.get(userId) ?? 0;
+  const next = Math.max(0, earned - amount);
+  if (next === 0) {
+    dailyCreditsByUser.delete(userId);
+  } else {
+    dailyCreditsByUser.set(userId, next);
+  }
 }
 
 /** Used by tests to start each case from a clean slate. */

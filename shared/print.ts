@@ -124,6 +124,13 @@ export interface PrintOrderResponse {
   order: PrintOrder;
   /** When integration is incomplete, server returns a friendly explanation. */
   notice?: string;
+  /**
+   * HMAC-signed one-time token that lets a guest customer revisit
+   * GET /api/print/orders/:id?token=... after closing their browser tab.
+   * Only present on order creation (POST). Treat it like a capability —
+   * anyone with the token + id can read the order.
+   */
+  lookupToken?: string;
 }
 
 /** Public config — tells the client what's wired and what isn't. */

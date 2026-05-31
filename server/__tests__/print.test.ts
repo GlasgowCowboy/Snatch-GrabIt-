@@ -4,6 +4,7 @@ import {
   getPrintConfig,
   getPrintOrder,
   listOrdersForUser,
+  verifyOrderToken,
   PrintError,
   _resetPrintOrders,
 } from '../print';
@@ -85,6 +86,26 @@ describe('print order intake', () => {
     const fetched = getPrintOrder(order.id);
     expect(fetched).toBeDefined();
     expect(fetched?.id).toBe(order.id);
+  });
+
+  it('returns a per-order lookupToken on creation', () => {
+    const res = createPrintOrder(sampleInput, null);
+    expect(res.lookupToken).toBeTruthy();
+    expect(res.lookupToken!.length).toBeGreaterThanOrEqual(16);
+    expect(verifyOrderToken(res.order.id, res.order.email, res.lookupToken!)).toBe(true);
+  });
+
+  it('verifyOrderToken rejects mismatched email or order id', () => {
+    const res = createPrintOrder(sampleInput, null);
+    expect(verifyOrderToken(res.order.id, 'other@example.com', res.lookupToken!)).toBe(false);
+    expect(verifyOrderToken('different-order-id', res.order.email, res.lookupToken!)).toBe(false);
+    expect(verifyOrderToken(res.order.id, res.order.email, 'forged-token-1234567890123456')).toBe(false);
+  });
+
+  it('verifyOrderToken is case-insensitive on email (matches signOrderToken normalisation)', () => {
+    const res = createPrintOrder({ ...sampleInput, email: 'Alice@Example.COM' }, null);
+    expect(verifyOrderToken(res.order.id, 'alice@example.com', res.lookupToken!)).toBe(true);
+    expect(verifyOrderToken(res.order.id, 'ALICE@EXAMPLE.COM', res.lookupToken!)).toBe(true);
   });
 
   it('config reflects env-var state', () => {
