@@ -591,6 +591,8 @@ export default function GameLobby({
         <a href="/privacy" className="hover:text-gold-light/80 underline-offset-2 hover:underline">Privacy</a>
         <span>·</span>
         <a href="/terms" className="hover:text-gold-light/80 underline-offset-2 hover:underline">Terms</a>
+        <span>·</span>
+        <a href="/print" className="hover:text-gold-light/80 underline-offset-2 hover:underline">Order a physical deck</a>
       </footer>
     </div>
   );

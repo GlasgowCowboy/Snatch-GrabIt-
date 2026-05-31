@@ -16,6 +16,14 @@ import {
   recordClick,
   getEngagementSnapshot,
 } from "./ad-engagement";
+import {
+  createPrintOrder,
+  getPrintConfig,
+  getPrintOrder,
+  listOrdersForUser,
+  PrintError,
+} from "./print";
+import { createPrintOrderSchema } from "@shared/print";
 
 // Cap room creation per IP so a single abuser can't fill the in-memory room store.
 const roomCreateLimiter = rateLimit({
@@ -360,6 +368,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       throw e;
     }
+  });
+
+  // ── Print-on-demand (#52) ─────────────────────────────────────────────────
+  // V1 scaffold: catalog + order intake. Payments + vendor wiring are gated
+  // behind env vars; until set, orders enter a manual-fulfilment queue.
+
+  app.get("/api/print/config", (_req, res) => {
+    res.json(getPrintConfig());
+  });
+
+  app.post("/api/print/orders", (req, res) => {
+    try {
+      const input = createPrintOrderSchema.parse(req.body);
+      const userId = req.isAuthenticated() ? req.user!.id : null;
+      const response = createPrintOrder(input, userId);
+      res.status(201).json(response);
+    } catch (e) {
+      if (e instanceof PrintError) {
+        return res.status(e.statusCode).json({ message: e.message });
+      }
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid request', errors: e.errors });
+      }
+      throw e;
+    }
+  });
+
+  app.get("/api/print/orders", (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    res.json({ orders: listOrdersForUser(req.user!.id) });
+  });
+
+  app.get("/api/print/orders/:id", (req, res) => {
+    const order = getPrintOrder(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    // Only the owner or admin can view a specific order. Guests can view
+    // their own only via the order-confirmation URL we return at creation —
+    // there isn't a guest auth handle here, so we 403 for now and route
+    // future guest lookups through a signed link.
+    const isOwner = req.isAuthenticated() && order.userId === req.user!.id;
+    const isAdmin = req.isAuthenticated() && req.user!.isAdmin;
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ message: 'Not authorized to view this order' });
+    }
+    res.json({ order });
   });
 
   // ── Sponsor-pitch engagement snapshot (#45) ───────────────────────────────
