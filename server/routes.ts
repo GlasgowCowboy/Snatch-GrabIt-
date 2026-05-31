@@ -11,6 +11,11 @@ import { log } from "./vite";
 import { recordHeartbeat, filterOnline } from "./presence";
 import { PRIZE_CATALOG, findPrize } from "@shared/prizes";
 import { joinQueue, leaveQueue, getStatus as getMatchmakingStatus } from "./matchmaking";
+import {
+  recordImpression,
+  recordClick,
+  getEngagementSnapshot,
+} from "./ad-engagement";
 
 // Cap room creation per IP so a single abuser can't fill the in-memory room store.
 const roomCreateLimiter = rateLimit({
@@ -313,6 +318,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
       adsenseClient: process.env.GOOGLE_ADSENSE_CLIENT ?? null,
       rewardCredits: AD_REWARD_CREDITS,
     });
+  });
+
+  // ── Passive ad-view credit rewards (#44) ──────────────────────────────────
+  // The AdSlot React component fires this on mount for each slot it renders.
+  // We credit 1 credit per slot per UTC day per user (cap 25/day) so casual
+  // play that sees several different ads accumulates a small reward without
+  // becoming a tab-flipping farming game.
+  const adSlotBodySchema = z.object({
+    // Accept the AdSense slot ID (a string of digits in the real config, but
+    // any short label is fine for engagement counting).
+    slot: z.string().min(1).max(64),
+  });
+
+  app.post("/api/ads/impression", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      const { slot } = adSlotBodySchema.parse(req.body);
+      const result = recordImpression(req.user!.id, slot);
+      if (result.creditsAwarded > 0) {
+        await storage.grantCredits(req.user!.id, result.creditsAwarded);
+      }
+      res.json(result);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid request', errors: e.errors });
+      }
+      throw e;
+    }
+  });
+
+  app.post("/api/ads/click", (req, res) => {
+    // Anonymous clicks count too — engagement is per-slot, not per-user.
+    try {
+      const { slot } = adSlotBodySchema.parse(req.body);
+      recordClick(slot);
+      res.sendStatus(204);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid request', errors: e.errors });
+      }
+      throw e;
+    }
+  });
+
+  // ── Sponsor-pitch engagement snapshot (#45) ───────────────────────────────
+  // Admin-only. Tells us which slots get the most attention so we can pitch
+  // direct sponsors on the highest-performing ones rather than relying on
+  // AdSense's auction prices.
+  app.get("/api/ads/engagement", (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    if (!req.user!.isAdmin) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    res.json({ slots: getEngagementSnapshot() });
   });
 
   // Virtual betting routes (entertainment only - no real-world value)

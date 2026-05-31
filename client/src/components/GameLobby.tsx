@@ -22,6 +22,7 @@ import Logo from './Logo';
 import LandingScreen from './LandingScreen';
 import PlayerAvatar from './PlayerAvatar';
 import FriendsPanel from './FriendsPanel';
+import { AdBannerTop, AdBannerBottom, AdSkyscraper } from './AdSlot';
 import CreditBadge from './CreditBadge';
 import ChipsBadge from './ChipsBadge';
 import RewardedAdButton from './RewardedAdButton';
@@ -265,6 +266,12 @@ export default function GameLobby({
         <CreditBadge />
         <ThemeToggle />
         <AccountDropdown />
+      </div>
+      <AdBannerTop />
+      {/* Desktop-only right rail (≥ lg). Absolute-positioned so it doesn't
+          shift the centred main panel on smaller widths. */}
+      <div className="hidden lg:block absolute right-4 top-24">
+        <AdSkyscraper />
       </div>
       <div className="glass-strong rounded-2xl border border-gold/20 w-full max-w-2xl">
         <div className="p-6 pb-0 text-center">
@@ -575,6 +582,7 @@ export default function GameLobby({
           )}
         </div>
       </div>
+      <AdBannerBottom />
       {/* Footer — links to legal pages so AdSense reviewers (and curious
           users) can find them within one click of the landing. */}
       <footer className="mt-4 mb-2 text-xs text-gold-light/40 flex flex-wrap items-center justify-center gap-2">
