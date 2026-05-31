@@ -19,6 +19,7 @@ import { ScoringMethod } from '@shared/schema';
 import { AIDifficulty } from '@shared/aiPlayer';
 import PendingInvites from './PendingInvites';
 import PlayerDashboard from './PlayerDashboard';
+import CardBackPicker from './CardBackPicker';
 
 /**
  * Multi-step landing replacing the old "one giant form" screen.
@@ -79,7 +80,7 @@ export default function LandingScreen({
   const [, navigate] = useLocation();
   const [step, setStep] = useState<Step>('choose');
   const [playerName, setPlayerName] = useState(profileDisplayName ?? '');
-  const [cardBackImage, setCardBackImage] = useState<string>(profileCardBack ?? '');
+  const [cardBackImage, setCardBackImage] = useState<string>(profileCardBack ?? 'preset:navy');
   const [uploadedFileLabel, setUploadedFileLabel] = useState<string>('');
   const [uploadError, setUploadError] = useState<string>('');
   const [joinCode, setJoinCode] = useState<string>(initialJoinCode?.toUpperCase() ?? '');
@@ -223,48 +224,8 @@ export default function LandingScreen({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="card-back">Card back (optional)</Label>
-        <div className="flex gap-3 items-center">
-          <Input
-            id="card-back"
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            data-testid="input-card-back"
-            className="flex-1"
-          />
-          {cardBackImage && (
-            <div className="w-12 h-16 rounded-md border border-border overflow-hidden">
-              <img
-                src={cardBackImage}
-                alt="Card back preview"
-                className="w-full h-full object-cover"
-                data-testid="img-card-back-preview"
-              />
-            </div>
-          )}
-        </div>
-        {uploadError && (
-          <p className="text-xs text-destructive" data-testid="text-upload-error" role="alert">
-            {uploadError}
-          </p>
-        )}
-        {!uploadError && cardBackImage && uploadedFileLabel && (
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="text-emerald-500 truncate" data-testid="text-upload-success">
-              ✓ Ready to use — {uploadedFileLabel}
-            </span>
-            <button
-              type="button"
-              onClick={handleClearCardBack}
-              data-testid="button-clear-card-back"
-              className="text-muted-foreground hover:text-destructive underline shrink-0"
-            >
-              Remove
-            </button>
-          </div>
-        )}
-        <p className="text-xs text-muted-foreground">JPG, PNG, GIF, or WebP — max 1 MB.</p>
+        <Label>Pick your card back</Label>
+        <CardBackPicker value={cardBackImage} onChange={setCardBackImage} />
       </div>
 
       <Button

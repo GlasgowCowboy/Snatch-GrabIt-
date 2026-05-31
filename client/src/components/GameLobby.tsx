@@ -20,6 +20,7 @@ import SponsorBanner from './SponsorBanner';
 import PendingInvites from './PendingInvites';
 import Logo from './Logo';
 import LandingScreen from './LandingScreen';
+import PlayerAvatar from './PlayerAvatar';
 import CreditBadge from './CreditBadge';
 import ChipsBadge from './ChipsBadge';
 import RewardedAdButton from './RewardedAdButton';
@@ -463,6 +464,7 @@ export default function GameLobby({
                         data-testid={`player-slot-${player.id}`}
                       >
                         <span className="text-sm font-medium text-gold-light flex items-center gap-2">
+                          <PlayerAvatar id={player.id} name={player.name} size={24} />
                           {player.name}
                           {isOffline && (
                             <span

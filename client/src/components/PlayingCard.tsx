@@ -82,6 +82,23 @@ export default function PlayingCard({
 
   // Face-down — premium card back with pattern or custom image
   if (faceDown) {
+    // Preset card back — applied as a CSS class instead of an <img>. Avoids
+    // serving a base64 image per card for the common case where players just
+    // pick one of the bundled designs.
+    if (cardBackImage?.startsWith('preset:')) {
+      const presetId = cardBackImage.slice('preset:'.length);
+      return (
+        <div
+          onClick={disabled ? undefined : onClick}
+          onAnimationEnd={handleAnimationEnd}
+          className={`relative w-16 h-24 rounded-lg overflow-hidden card-back-preset-${presetId} card-3d border-2 border-gold/30 ${
+            disabled ? 'cursor-not-allowed opacity-50' : onClick ? 'cursor-pointer hover:card-3d-hover hover:-translate-y-0.5 hover:border-gold/50 active:translate-y-0' : ''
+          } transition-all duration-200 ${getAnimationClass()} ${className}`}
+          data-testid="card-facedown"
+          aria-disabled={disabled}
+        />
+      );
+    }
     if (cardBackImage) {
       return (
         <div

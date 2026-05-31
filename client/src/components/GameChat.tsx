@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Send } from 'lucide-react';
 import { ScrollArea } from './ui/scroll-area';
+import PlayerAvatar from './PlayerAvatar';
 
 interface GameChatProps {
   messages: ChatMessage[];
@@ -138,21 +139,24 @@ export default function GameChat({
               return (
                 <div
                   key={msg.id}
-                  className={`flex flex-col gap-1 ${isCurrentPlayer ? 'items-end' : 'items-start'}`}
+                  className={`flex gap-2 ${isCurrentPlayer ? 'flex-row-reverse' : 'flex-row'}`}
                   data-testid={`chat-message-${msg.id}`}
                 >
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="font-semibold">{msg.playerName}</span>
-                    <span>{time}</span>
-                  </div>
-                  <div
-                    className={`rounded-lg px-3 py-2 max-w-[80%] ${
-                      isCurrentPlayer
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
-                    }`}
-                  >
-                    <p className="text-sm break-words">{msg.message}</p>
+                  <PlayerAvatar id={msg.playerId} name={msg.playerName} size={28} className="mt-5" />
+                  <div className={`flex flex-col gap-1 max-w-[80%] ${isCurrentPlayer ? 'items-end' : 'items-start'}`}>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="font-semibold">{msg.playerName}</span>
+                      <span>{time}</span>
+                    </div>
+                    <div
+                      className={`rounded-lg px-3 py-2 ${
+                        isCurrentPlayer
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted'
+                      }`}
+                    >
+                      <p className="text-sm break-words">{msg.message}</p>
+                    </div>
                   </div>
                 </div>
               );

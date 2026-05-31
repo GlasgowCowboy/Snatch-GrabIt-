@@ -400,11 +400,67 @@
     box-shadow: 0 2px 8px rgba(245, 166, 35, 0.4);
   }
 
-  /* Card back pattern */
+  /* Card back pattern (default — same as preset-navy below for back-compat) */
   .card-back-pattern {
     background:
       linear-gradient(135deg, #2d1b69 0%, #1a1145 50%, #0f0a2e 100%);
     position: relative;
+  }
+
+  /* ── Preset card-back designs ────────────────────────────────────────────
+     Each preset is a single class. PlayingCard recognises a
+     `preset:<id>` value in cardBackImage and applies the matching class
+     instead of rendering an <img>. Cheap, themable, no asset loading. */
+
+  .card-back-preset-navy {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(255,255,255,0.06), transparent 50%),
+      linear-gradient(135deg, #1e1b4b 0%, #0f0a2e 100%);
+  }
+  .card-back-preset-gold {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(255,255,255,0.18), transparent 50%),
+      linear-gradient(135deg, #f59e0b 0%, #b45309 100%);
+  }
+  .card-back-preset-emerald {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(255,255,255,0.10), transparent 50%),
+      linear-gradient(135deg, #064e3b 0%, #022c22 100%);
+  }
+  .card-back-preset-crimson {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(255,255,255,0.10), transparent 50%),
+      linear-gradient(135deg, #9f1239 0%, #4c0519 100%);
+  }
+  .card-back-preset-violet {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(255,255,255,0.10), transparent 50%),
+      linear-gradient(135deg, #6d28d9 0%, #2e1065 100%);
+  }
+  .card-back-preset-monochrome {
+    background:
+      radial-gradient(circle at 30% 30%, rgba(255,255,255,0.06), transparent 50%),
+      linear-gradient(135deg, #1f2937 0%, #030712 100%);
+  }
+
+  /* Subtle diagonal-stripe overlay shared by every preset — gives them all
+     a card-back feel without needing per-preset SVG. */
+  .card-back-preset-navy::after,
+  .card-back-preset-gold::after,
+  .card-back-preset-emerald::after,
+  .card-back-preset-crimson::after,
+  .card-back-preset-violet::after,
+  .card-back-preset-monochrome::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      45deg,
+      transparent 0 6px,
+      rgba(255,255,255,0.05) 6px 7px
+    );
+    pointer-events: none;
+    border-radius: inherit;
   }
 
   .card-back-pattern::before {
