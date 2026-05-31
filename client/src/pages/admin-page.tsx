@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
 import { Settings, Image, Loader2 } from 'lucide-react';
 import type { AdminSettings } from '@shared/schema';
+import AdEngagementPanel from '@/components/AdEngagementPanel';
 
 export default function AdminPage() {
   const { user } = useAuth();
@@ -326,8 +327,8 @@ export default function AdminPage() {
             <Button type="button" variant="outline" onClick={() => setFormData(settings)}>
               Reset Changes
             </Button>
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               disabled={updateMutation.isPending}
               data-testid="button-save-settings"
             >
@@ -336,6 +337,10 @@ export default function AdminPage() {
             </Button>
           </div>
         </form>
+
+        {/* Direct-sponsor pipeline (#45). Lives outside the settings form
+            because it's read-only analytics, not a form field. */}
+        <AdEngagementPanel />
       </div>
     </div>
   );
