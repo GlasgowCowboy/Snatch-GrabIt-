@@ -48,6 +48,7 @@ interface GameLobbyProps {
   initialJoinCode?: string; // Prefill the "join room" input from a deep link (?join=…)
   onCreateRoom?: (playerName: string, cardBackImage?: string, scoringMethod?: ScoringMethod, targetScore?: number, aiConfig?: {numAI: number, difficulty: AIDifficulty}, durationSec?: number) => void;
   onJoinRoom?: (roomCode: string, playerName: string, cardBackImage?: string) => void;
+  onMatched?: (roomCode: string, playerId: string) => void;
   onStartGame?: () => void;
   onToggleReady?: () => void;
   onLeaveRoom?: () => void;
@@ -65,6 +66,7 @@ export default function GameLobby({
   initialJoinCode,
   onCreateRoom,
   onJoinRoom,
+  onMatched,
   onStartGame,
   onToggleReady,
   onLeaveRoom,
@@ -288,6 +290,7 @@ export default function GameLobby({
                 onCreateRoom?.(name, cardBack, method, target, aiConfig, durationSec)
               }
               onJoinRoom={(code, name, cardBack) => onJoinRoom?.(code, name, cardBack)}
+              onMatched={onMatched}
             />
           ) : (
             <div className="space-y-6">

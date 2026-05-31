@@ -7,6 +7,7 @@ import { getQueryFn } from '@/lib/queryClient';
 import type { UserProfile } from '@shared/schema';
 import PendingInvites from './PendingInvites';
 import FriendsPanel from './FriendsPanel';
+import MatchmakingButton from './MatchmakingButton';
 
 /**
  * Logged-in home dashboard. Surfaces the things a returning player wants on
@@ -52,9 +53,11 @@ interface PlayerDashboardProps {
   onNewGame: () => void;
   onJoinCode: () => void;
   onAcceptInvite: (code: string) => void;
+  /** Hand-off from matchmaking — drop the dashboard, jump to the new room. */
+  onMatched?: (code: string, playerId: string) => void;
 }
 
-export default function PlayerDashboard({ onNewGame, onJoinCode, onAcceptInvite }: PlayerDashboardProps) {
+export default function PlayerDashboard({ onNewGame, onJoinCode, onAcceptInvite, onMatched }: PlayerDashboardProps) {
   const { user } = useAuth();
   const [, navigate] = useLocation();
 
@@ -141,6 +144,11 @@ export default function PlayerDashboard({ onNewGame, onJoinCode, onAcceptInvite 
           <Hash className="w-4 h-4 mr-2" />
           Join with code
         </Button>
+        {onMatched && (
+          <MatchmakingButton
+            onMatched={(roomCode, playerId) => onMatched(roomCode, playerId)}
+          />
+        )}
       </div>
 
       {/* Recent games */}

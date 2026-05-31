@@ -56,6 +56,8 @@ interface LandingScreenProps {
     playerName: string,
     cardBackImage: string | undefined,
   ) => void;
+  /** Hand-off from open matchmaking — server has already created the room. */
+  onMatched?: (roomCode: string, playerId: string) => void;
 }
 
 type Step = 'choose' | 'identity-create' | 'identity-join' | 'code' | 'setup';
@@ -76,6 +78,7 @@ export default function LandingScreen({
   profileCardBack,
   onCreateRoom,
   onJoinRoom,
+  onMatched,
 }: LandingScreenProps) {
   const [, navigate] = useLocation();
   const [step, setStep] = useState<Step>('choose');
@@ -156,6 +159,7 @@ export default function LandingScreen({
             setJoinCode(code);
             setStep('code');
           }}
+          onMatched={onMatched}
         />
       );
     }

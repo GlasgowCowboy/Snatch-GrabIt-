@@ -156,6 +156,17 @@ export default function Home() {
     joinRoomMutation.mutate({ code, playerName, cardBackImage: cardBackImage || undefined });
   };
 
+  /**
+   * Matchmaking handoff — the server has already created the room AND added
+   * us as a player, so we just need to flip into 'waiting' with the room
+   * code + playerId it returned. No mutation call needed.
+   */
+  const handleMatched = (code: string, playerIdFromMatch: string) => {
+    setRoomCode(code);
+    setPlayerId(playerIdFromMatch);
+    setUIState('waiting');
+  };
+
   const handleCountdownComplete = () => setUIState('playing');
 
   if (uiState === 'playing' && gameState) {
@@ -187,6 +198,7 @@ export default function Home() {
         initialJoinCode={uiState === 'lobby' ? initialJoinCode : undefined}
         onCreateRoom={handleCreateRoom}
         onJoinRoom={handleJoinRoom}
+        onMatched={handleMatched}
         onStartGame={() => startMutation.mutate()}
         onToggleReady={() => readyMutation.mutate()}
         onLeaveRoom={uiState === 'waiting' ? () => leaveMutation.mutate() : undefined}

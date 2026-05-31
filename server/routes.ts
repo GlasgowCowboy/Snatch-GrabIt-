@@ -10,6 +10,7 @@ import { sendEmail, appUrl } from "./email";
 import { log } from "./vite";
 import { recordHeartbeat, filterOnline } from "./presence";
 import { PRIZE_CATALOG, findPrize } from "@shared/prizes";
+import { joinQueue, leaveQueue, getStatus as getMatchmakingStatus } from "./matchmaking";
 
 // Cap room creation per IP so a single abuser can't fill the in-memory room store.
 const roomCreateLimiter = rateLimit({
@@ -219,6 +220,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const limit = parseInt(req.query.limit as string) || 20;
     const rows = await storage.listUserRedemptions(req.user!.id, limit);
     res.json(rows);
+  });
+
+  // ── Matchmaking queue ──────────────────────────────────────────────────
+
+  app.post("/api/matchmaking/queue", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      const schema = z.object({
+        scoringMethod: z.enum(['fullHand', 'round', 'timed']),
+        targetScore: z.number().int().positive(),
+        durationSec: z.number().int().min(60).max(60 * 60).optional(),
+      });
+      const body = schema.parse(req.body);
+      const status = await joinQueue({
+        userId: req.user!.id,
+        username: req.user!.username,
+        scoringMethod: body.scoringMethod,
+        targetScore: body.targetScore,
+        durationSec: body.durationSec,
+      });
+      res.json(status);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Invalid request', errors: e.errors });
+      }
+      throw e;
+    }
+  });
+
+  app.delete("/api/matchmaking/queue", (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    leaveQueue(req.user!.id);
+    res.sendStatus(204);
+  });
+
+  app.get("/api/matchmaking/status", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const status = await getMatchmakingStatus(req.user!.id);
+    res.json(status);
   });
 
   // ── Rewarded video ad grant ───────────────────────────────────────────────
