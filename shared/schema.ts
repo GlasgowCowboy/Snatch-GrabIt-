@@ -155,6 +155,28 @@ export const virtualBets = pgTable(
   }),
 );
 
+// Friendships — directional rows, two rows per "real" friendship after
+// acceptance (one with status=accepted in each direction). On request: a
+// single row with status=pending from requester→target. Accept = set existing
+// row to accepted AND insert the reciprocal accepted row. Block is one-way.
+export const friendships = pgTable(
+  "friendships",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().references(() => users.id),
+    friendId: varchar("friend_id").notNull().references(() => users.id),
+    status: text("status").notNull(), // 'pending' | 'accepted' | 'blocked'
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    // Hot query: list my friends — keyed by userId + status.
+    userStatusIdx: index("friendships_user_status_idx").on(table.userId, table.status),
+    // Inbound: "who has me pending?" — friendId scan for incoming requests.
+    friendStatusIdx: index("friendships_friend_status_idx").on(table.friendId, table.status),
+  }),
+);
+
 // Password reset tokens table
 export const passwordResetTokens = pgTable(
   "password_reset_tokens",
@@ -240,6 +262,12 @@ export const insertAdminSettingsSchema = createInsertSchema(adminSettings).omit(
   updatedAt: true,
 });
 
+export const insertFriendshipSchema = createInsertSchema(friendships).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertUserProfile = z.infer<typeof insertUserProfileSchema>;
@@ -256,6 +284,19 @@ export type InsertVirtualBet = z.infer<typeof insertVirtualBetSchema>;
 export type VirtualBet = typeof virtualBets.$inferSelect;
 export type InsertAdminSettings = z.infer<typeof insertAdminSettingsSchema>;
 export type AdminSettings = typeof adminSettings.$inferSelect;
+export type InsertFriendship = z.infer<typeof insertFriendshipSchema>;
+export type Friendship = typeof friendships.$inferSelect;
+
+/** Hydrated shape returned by /api/friends — friendship row + the friend's profile. */
+export interface FriendWithProfile {
+  friendshipId: string;
+  friendUserId: string;
+  status: 'pending' | 'accepted' | 'blocked';
+  /** True when this friendship is pending and the REQUEST came FROM the friend (i.e. you need to accept it). */
+  incoming: boolean;
+  displayName: string;
+  username: string;
+}
 
 export type Suit = 'hearts' | 'diamonds' | 'clubs' | 'spades';
 export type Rank = 'A' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K';

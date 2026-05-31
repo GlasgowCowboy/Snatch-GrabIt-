@@ -8,6 +8,7 @@ import { gameSocket } from "./gameSocket";
 import { inviteManager } from "./invites";
 import { sendEmail, appUrl } from "./email";
 import { log } from "./vite";
+import { recordHeartbeat, filterOnline } from "./presence";
 
 // Cap room creation per IP so a single abuser can't fill the in-memory room store.
 const roomCreateLimiter = rateLimit({
@@ -118,6 +119,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
       winPct: entry?.winPct ?? 0,
       avgPlacement: entry?.avgPlacement ?? 0,
     });
+  });
+
+  // ── Friends + Presence ──────────────────────────────────────────────────
+
+  app.get("/api/friends", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const friends = await storage.listFriends(req.user!.id);
+    // Decorate with online flag so the UI can show a green dot inline.
+    const ids = friends.map((f) => f.friendUserId);
+    const onlineSet = new Set(filterOnline(ids));
+    res.json(
+      friends.map((f) => ({ ...f, online: onlineSet.has(f.friendUserId) })),
+    );
+  });
+
+  app.post("/api/friends/request", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      const schema = z.object({ username: z.string().min(1).max(50) });
+      const { username } = schema.parse(req.body);
+      const target = await storage.getUserByUsername(username);
+      if (!target) return res.status(404).json({ message: "No user with that username" });
+      if (target.id === req.user!.id) return res.status(400).json({ message: "You can't friend yourself" });
+      const row = await storage.sendFriendRequest(req.user!.id, target.id);
+      res.status(201).json(row);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid request", errors: error.errors });
+      }
+      if (error instanceof Error) {
+        return res.status(400).json({ message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/api/friends/:id/accept", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      await storage.acceptFriendRequest(req.user!.id, req.params.id);
+      res.sendStatus(204);
+    } catch (error) {
+      if (error instanceof Error) {
+        return res.status(400).json({ message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/api/friends/:id", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    try {
+      await storage.removeFriendship(req.user!.id, req.params.id);
+      res.sendStatus(204);
+    } catch (error) {
+      if (error instanceof Error) {
+        return res.status(400).json({ message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /** Heartbeat — clients hit this every 30 s while focused. Powers /api/friends online flags. */
+  app.post("/api/presence/heartbeat", (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    recordHeartbeat(req.user!.id);
+    res.sendStatus(204);
   });
 
   // ── Rewarded video ad grant ───────────────────────────────────────────────

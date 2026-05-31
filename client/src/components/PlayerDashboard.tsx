@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { getQueryFn } from '@/lib/queryClient';
 import type { UserProfile } from '@shared/schema';
 import PendingInvites from './PendingInvites';
+import FriendsPanel from './FriendsPanel';
 
 /**
  * Logged-in home dashboard. Surfaces the things a returning player wants on
@@ -156,6 +157,11 @@ export default function PlayerDashboard({ onNewGame, onJoinCode, onAcceptInvite 
           </div>
         </Section>
       )}
+
+      {/* Friends */}
+      <Section title="Friends">
+        <FriendsPanel limit={5} />
+      </Section>
 
       {/* Mini-leaderboard */}
       {top5.length > 0 && (

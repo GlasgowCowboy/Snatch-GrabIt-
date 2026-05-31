@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/use-auth";
 import { ProtectedRoute } from "@/lib/protected-route";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { usePresenceHeartbeat } from "@/hooks/use-presence-heartbeat";
 import Home from "@/pages/Home";
 import AuthPage from "@/pages/auth-page";
 import ProfilePage from "@/pages/profile-page";
@@ -18,6 +19,9 @@ import TermsOfService from "@/pages/terms-of-service";
 import NotFound from "@/pages/not-found";
 
 function Router() {
+  // Tick the presence heartbeat while logged in — lives at the router level
+  // so it runs on every authenticated page without needing a per-page hookup.
+  usePresenceHeartbeat();
   return (
     <Switch>
       <Route path="/" component={Home} />

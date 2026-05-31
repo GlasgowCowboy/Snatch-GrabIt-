@@ -1,6 +1,6 @@
 // From blueprint: javascript_auth_all_persistance
-import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings } from "@shared/schema";
-import { users, userProfiles, games, gameParticipants, passwordResetTokens, emailVerificationTokens, virtualBets, adminSettings } from "@shared/schema";
+import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings, type Friendship, type FriendWithProfile } from "@shared/schema";
+import { users, userProfiles, games, gameParticipants, passwordResetTokens, emailVerificationTokens, virtualBets, adminSettings, friendships } from "@shared/schema";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { db } from "./db";
@@ -103,6 +103,16 @@ export interface IStorage {
   // Admin settings
   getAdminSettings(): Promise<AdminSettings>;
   updateAdminSettings(updates: Partial<InsertAdminSettings>): Promise<AdminSettings>;
+
+  // Friends
+  /** All accepted + pending friendships involving this user (hydrated with profile). */
+  listFriends(userId: string): Promise<FriendWithProfile[]>;
+  /** Create a pending row userId → friendId. Idempotent: re-requesting an existing row no-ops. */
+  sendFriendRequest(userId: string, friendId: string): Promise<Friendship>;
+  /** Accept an incoming request — flips the existing pending row + inserts reciprocal accepted row. */
+  acceptFriendRequest(userId: string, friendshipId: string): Promise<void>;
+  /** Decline / cancel / unfriend — deletes BOTH directions of the relationship. */
+  removeFriendship(userId: string, friendshipId: string): Promise<void>;
 
   sessionStore: session.Store;
 }
@@ -508,6 +518,141 @@ export class DatabaseStorage implements IStorage {
       .where(eq(adminSettings.id, existing.id))
       .returning();
     return updated;
+  }
+
+  // ── Friends ──────────────────────────────────────────────────────────────
+
+  async listFriends(userId: string): Promise<FriendWithProfile[]> {
+    // Outbound: rows I own (status may be pending or accepted).
+    const outbound = await db
+      .select({
+        friendshipId: friendships.id,
+        friendUserId: friendships.friendId,
+        status: friendships.status,
+        displayName: userProfiles.displayName,
+        username: users.username,
+      })
+      .from(friendships)
+      .innerJoin(users, eq(users.id, friendships.friendId))
+      .leftJoin(userProfiles, eq(userProfiles.userId, friendships.friendId))
+      .where(eq(friendships.userId, userId));
+
+    // Inbound: rows where I'm the target of someone else's pending request.
+    // (Their accepted row would already appear as outbound on my side after
+    // an accept created the reciprocal row.)
+    const inbound = await db
+      .select({
+        friendshipId: friendships.id,
+        friendUserId: friendships.userId,
+        status: friendships.status,
+        displayName: userProfiles.displayName,
+        username: users.username,
+      })
+      .from(friendships)
+      .innerJoin(users, eq(users.id, friendships.userId))
+      .leftJoin(userProfiles, eq(userProfiles.userId, friendships.userId))
+      .where(
+        sql`${friendships.friendId} = ${userId} and ${friendships.status} = 'pending'`,
+      );
+
+    return [
+      ...outbound.map((r) => ({
+        friendshipId: r.friendshipId,
+        friendUserId: r.friendUserId,
+        status: r.status as FriendWithProfile['status'],
+        incoming: false,
+        displayName: r.displayName ?? r.username,
+        username: r.username,
+      })),
+      ...inbound.map((r) => ({
+        friendshipId: r.friendshipId,
+        friendUserId: r.friendUserId,
+        status: r.status as FriendWithProfile['status'],
+        incoming: true,
+        displayName: r.displayName ?? r.username,
+        username: r.username,
+      })),
+    ];
+  }
+
+  async sendFriendRequest(userId: string, friendId: string): Promise<Friendship> {
+    if (userId === friendId) throw new Error("You can't friend yourself");
+    // Idempotent — if a row already exists in either direction, return it
+    // without inserting a duplicate. Keeps the "send" button safe to spam.
+    const [existing] = await db
+      .select()
+      .from(friendships)
+      .where(
+        sql`(${friendships.userId} = ${userId} and ${friendships.friendId} = ${friendId})
+           or (${friendships.userId} = ${friendId} and ${friendships.friendId} = ${userId})`,
+      )
+      .limit(1);
+    if (existing) return existing;
+    const [row] = await db
+      .insert(friendships)
+      .values({ userId, friendId, status: 'pending' })
+      .returning();
+    return row;
+  }
+
+  async acceptFriendRequest(userId: string, friendshipId: string): Promise<void> {
+    // Load the pending row + confirm WE are the target (you can't accept your
+    // own request). Then flip + insert reciprocal.
+    const [row] = await db
+      .select()
+      .from(friendships)
+      .where(eq(friendships.id, friendshipId))
+      .limit(1);
+    if (!row) throw new Error('Friend request not found');
+    if (row.friendId !== userId) throw new Error('You are not the target of this request');
+    if (row.status === 'accepted') return; // already done
+    await db.transaction(async (tx) => {
+      await tx
+        .update(friendships)
+        .set({ status: 'accepted', updatedAt: new Date() })
+        .where(eq(friendships.id, friendshipId));
+      // Reciprocal — guarded against an existing row from a re-request race.
+      const [recip] = await tx
+        .select()
+        .from(friendships)
+        .where(
+          sql`${friendships.userId} = ${userId} and ${friendships.friendId} = ${row.userId}`,
+        )
+        .limit(1);
+      if (recip) {
+        await tx
+          .update(friendships)
+          .set({ status: 'accepted', updatedAt: new Date() })
+          .where(eq(friendships.id, recip.id));
+      } else {
+        await tx.insert(friendships).values({
+          userId,
+          friendId: row.userId,
+          status: 'accepted',
+        });
+      }
+    });
+  }
+
+  async removeFriendship(userId: string, friendshipId: string): Promise<void> {
+    // Must own the row OR be the target of it. Either way, nuke both sides.
+    const [row] = await db
+      .select()
+      .from(friendships)
+      .where(eq(friendships.id, friendshipId))
+      .limit(1);
+    if (!row) return;
+    if (row.userId !== userId && row.friendId !== userId) {
+      throw new Error('Not your friendship');
+    }
+    const a = row.userId;
+    const b = row.friendId;
+    await db
+      .delete(friendships)
+      .where(
+        sql`(${friendships.userId} = ${a} and ${friendships.friendId} = ${b})
+           or (${friendships.userId} = ${b} and ${friendships.friendId} = ${a})`,
+      );
   }
 }
 

@@ -21,6 +21,7 @@ import PendingInvites from './PendingInvites';
 import Logo from './Logo';
 import LandingScreen from './LandingScreen';
 import PlayerAvatar from './PlayerAvatar';
+import FriendsPanel from './FriendsPanel';
 import CreditBadge from './CreditBadge';
 import ChipsBadge from './ChipsBadge';
 import RewardedAdButton from './RewardedAdButton';
@@ -429,6 +430,20 @@ export default function GameLobby({
                       Invite
                     </Button>
                   </div>
+                </div>
+              )}
+
+              {/* Friends — quick-challenge any online accepted friend with one tap */}
+              {user && roomCode && (
+                <div className="space-y-2">
+                  <div className="text-xs text-gold-light/50 text-center">Challenge a friend</div>
+                  <FriendsPanel
+                    hideAdd
+                    limit={5}
+                    onChallenge={(f) =>
+                      inviteByUsernameMutation.mutate({ code: roomCode, targetUsername: f.username })
+                    }
+                  />
                 </div>
               )}
 

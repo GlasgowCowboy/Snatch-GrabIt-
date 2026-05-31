@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings } from "@shared/schema";
+import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings, type Friendship, type FriendWithProfile } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import createMemoryStore from "memorystore";
@@ -424,5 +424,97 @@ export class MemoryStorage implements IStorage {
     const settings = await this.getAdminSettings();
     Object.assign(settings, updates, { updatedAt: new Date() });
     return settings;
+  }
+
+  // ── Friends ──────────────────────────────────────────────────────────────
+
+  private friendships: Friendship[] = [];
+
+  async listFriends(userId: string): Promise<FriendWithProfile[]> {
+    const out: FriendWithProfile[] = [];
+    for (const row of this.friendships) {
+      if (row.userId !== userId && row.friendId !== userId) continue;
+      const incoming = row.friendId === userId && row.status === 'pending';
+      // Skip accepted reciprocal rows where we're the "owner" but the friend
+      // also has their own outbound row — we don't want them listed twice.
+      // Outbound from us is the canonical representation in the merged list;
+      // we just additionally include inbound pending requests.
+      if (!incoming && row.userId !== userId) continue;
+      const friendId = incoming ? row.userId : row.friendId;
+      const friendUser = this.users.get(friendId);
+      const friendProfile = this.profiles.get(friendId);
+      if (!friendUser) continue;
+      out.push({
+        friendshipId: row.id,
+        friendUserId: friendId,
+        status: row.status as FriendWithProfile['status'],
+        incoming,
+        displayName: friendProfile?.displayName ?? friendUser.username,
+        username: friendUser.username,
+      });
+    }
+    return out;
+  }
+
+  async sendFriendRequest(userId: string, friendId: string): Promise<Friendship> {
+    if (userId === friendId) throw new Error("You can't friend yourself");
+    const existing = this.friendships.find(
+      (r) =>
+        (r.userId === userId && r.friendId === friendId) ||
+        (r.userId === friendId && r.friendId === userId),
+    );
+    if (existing) return existing;
+    const row: Friendship = {
+      id: randomUUID(),
+      userId,
+      friendId,
+      status: 'pending',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.friendships.push(row);
+    return row;
+  }
+
+  async acceptFriendRequest(userId: string, friendshipId: string): Promise<void> {
+    const row = this.friendships.find((r) => r.id === friendshipId);
+    if (!row) throw new Error('Friend request not found');
+    if (row.friendId !== userId) throw new Error('You are not the target of this request');
+    if (row.status === 'accepted') return;
+    row.status = 'accepted';
+    row.updatedAt = new Date();
+    const recip = this.friendships.find(
+      (r) => r.userId === userId && r.friendId === row.userId,
+    );
+    if (recip) {
+      recip.status = 'accepted';
+      recip.updatedAt = new Date();
+    } else {
+      this.friendships.push({
+        id: randomUUID(),
+        userId,
+        friendId: row.userId,
+        status: 'accepted',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  async removeFriendship(userId: string, friendshipId: string): Promise<void> {
+    const row = this.friendships.find((r) => r.id === friendshipId);
+    if (!row) return;
+    if (row.userId !== userId && row.friendId !== userId) {
+      throw new Error('Not your friendship');
+    }
+    const a = row.userId;
+    const b = row.friendId;
+    this.friendships = this.friendships.filter(
+      (r) =>
+        !(
+          (r.userId === a && r.friendId === b) ||
+          (r.userId === b && r.friendId === a)
+        ),
+    );
   }
 }

@@ -578,7 +578,14 @@ describe('gameSocket integration', () => {
     // Host simulates a network blip.
     await hostClient.close();
 
-    // While host is offline, guest makes a move. No broadcast should reach the old socket.
+    // Disconnect-detected auto-pause kicks in — guest needs to manually
+    // resume before they can move on their own. (Any player can resume.)
+    // The auto-pause itself is a state broadcast, then the resume is another.
+    await guestClient.next((m) => m.type === 'state'); // auto-paused
+    guestClient.send({ type: 'move', move: { type: 'resume-game' } });
+    await guestClient.next((m) => m.type === 'state'); // resumed
+
+    // While host is offline (but resumed), guest makes a move.
     guestClient.send({ type: 'move', move: { type: 'draw-pile' } });
     const guestStateAfterMove = await guestClient.next((m) => m.type === 'state');
     if (guestStateAfterMove.type !== 'state') throw new Error('expected state');
