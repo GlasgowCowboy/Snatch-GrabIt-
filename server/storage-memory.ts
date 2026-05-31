@@ -1,4 +1,5 @@
-import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings, type Friendship, type FriendWithProfile } from "@shared/schema";
+import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings, type Friendship, type FriendWithProfile, type Redemption } from "@shared/schema";
+import type { Prize } from "@shared/prizes";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import createMemoryStore from "memorystore";
@@ -424,6 +425,44 @@ export class MemoryStorage implements IStorage {
     const settings = await this.getAdminSettings();
     Object.assign(settings, updates, { updatedAt: new Date() });
     return settings;
+  }
+
+  // ── Prizes ───────────────────────────────────────────────────────────────
+
+  private redemptions: Redemption[] = [];
+
+  async redeemPrize(userId: string, prize: Prize): Promise<Redemption> {
+    const profile = this.profiles.get(userId);
+    if (!profile) throw new Error('User profile not found');
+    if (profile.earnedCredits < prize.creditCost) {
+      throw new Error('Insufficient credits');
+    }
+    if (prize.kind === 'extra_chips') {
+      const chips = Number(prize.payload.chips ?? 0);
+      if (!Number.isFinite(chips) || chips <= 0) throw new Error('Invalid prize payload');
+      profile.earnedCredits -= prize.creditCost;
+      profile.virtualChips += chips;
+    } else {
+      throw new Error(`Unknown prize kind: ${prize.kind}`);
+    }
+    const row: Redemption = {
+      id: randomUUID(),
+      userId,
+      prizeId: prize.id,
+      creditsSpent: prize.creditCost,
+      prizeSnapshot: prize,
+      createdAt: new Date(),
+      fulfilledAt: new Date(),
+    };
+    this.redemptions.push(row);
+    return row;
+  }
+
+  async listUserRedemptions(userId: string, limit = 20): Promise<Redemption[]> {
+    return this.redemptions
+      .filter((r) => r.userId === userId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit);
   }
 
   // ── Friends ──────────────────────────────────────────────────────────────

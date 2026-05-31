@@ -155,6 +155,31 @@ export const virtualBets = pgTable(
   }),
 );
 
+/**
+ * Prize redemptions. The catalog itself lives in code (PRIZE_CATALOG in
+ * @shared/prizes) — only the user→prize transactions land in the DB. Keeps
+ * adding/removing prize tiers a code change, not a migration.
+ */
+export const redemptions = pgTable(
+  "redemptions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().references(() => users.id),
+    prizeId: text("prize_id").notNull(),
+    creditsSpent: integer("credits_spent").notNull(),
+    /** Snapshot of the prize at redemption time (name, kind, etc.) for audit. */
+    prizeSnapshot: json("prize_snapshot").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** When the prize's effect was actually granted (e.g. chips added). Same
+     *  tick as createdAt for synchronous prizes like extra chips; nullable so
+     *  async prizes (vouchers, physical decks) can fill it later. */
+    fulfilledAt: timestamp("fulfilled_at", { withTimezone: true }),
+  },
+  (table) => ({
+    userIdx: index("redemptions_user_idx").on(table.userId),
+  }),
+);
+
 // Friendships — directional rows, two rows per "real" friendship after
 // acceptance (one with status=accepted in each direction). On request: a
 // single row with status=pending from requester→target. Accept = set existing
@@ -286,6 +311,7 @@ export type InsertAdminSettings = z.infer<typeof insertAdminSettingsSchema>;
 export type AdminSettings = typeof adminSettings.$inferSelect;
 export type InsertFriendship = z.infer<typeof insertFriendshipSchema>;
 export type Friendship = typeof friendships.$inferSelect;
+export type Redemption = typeof redemptions.$inferSelect;
 
 /** Hydrated shape returned by /api/friends — friendship row + the friend's profile. */
 export interface FriendWithProfile {

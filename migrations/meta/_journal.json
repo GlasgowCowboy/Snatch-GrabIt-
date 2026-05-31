@@ -36,6 +36,13 @@
       "when": 1780201861305,
       "tag": "0004_friendships",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780202803485,
+      "tag": "0005_redemptions",
+      "breakpoints": true
     }
   ]
 }

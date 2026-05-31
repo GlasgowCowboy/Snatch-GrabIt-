@@ -9,6 +9,7 @@ import { inviteManager } from "./invites";
 import { sendEmail, appUrl } from "./email";
 import { log } from "./vite";
 import { recordHeartbeat, filterOnline } from "./presence";
+import { PRIZE_CATALOG, findPrize } from "@shared/prizes";
 
 // Cap room creation per IP so a single abuser can't fill the in-memory room store.
 const roomCreateLimiter = rateLimit({
@@ -186,6 +187,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.isAuthenticated()) return res.sendStatus(401);
     recordHeartbeat(req.user!.id);
     res.sendStatus(204);
+  });
+
+  // ── Prize catalog + redemption ──────────────────────────────────────────
+
+  /** Public — anyone can browse the catalog (no chips spent here). */
+  app.get("/api/prizes", (_req, res) => {
+    res.json(PRIZE_CATALOG);
+  });
+
+  /** Redeem a prize — atomic credit-spend + payload apply. */
+  app.post("/api/prizes/:id/redeem", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const prize = findPrize(req.params.id);
+    if (!prize) return res.status(404).json({ message: "Unknown prize" });
+    try {
+      const redemption = await storage.redeemPrize(req.user!.id, prize);
+      res.status(201).json(redemption);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Redemption failed";
+      // 400 covers the user-facing "Insufficient credits" + payload errors;
+      // anything else genuinely unexpected still surfaces as 400 here rather
+      // than 500 so it stays user-actionable.
+      res.status(400).json({ message });
+    }
+  });
+
+  /** Logged-in user's redemption history — for "your purchases" lists. */
+  app.get("/api/prizes/history", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const limit = parseInt(req.query.limit as string) || 20;
+    const rows = await storage.listUserRedemptions(req.user!.id, limit);
+    res.json(rows);
   });
 
   // ── Rewarded video ad grant ───────────────────────────────────────────────

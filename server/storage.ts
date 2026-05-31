@@ -1,6 +1,7 @@
 // From blueprint: javascript_auth_all_persistance
-import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings, type Friendship, type FriendWithProfile } from "@shared/schema";
-import { users, userProfiles, games, gameParticipants, passwordResetTokens, emailVerificationTokens, virtualBets, adminSettings, friendships } from "@shared/schema";
+import { type User, type InsertUser, type UserProfile, type InsertUserProfile, type Game, type InsertGame, type GameParticipant, type InsertGameParticipant, type PasswordResetToken, type InsertPasswordResetToken, type EmailVerificationToken, type InsertEmailVerificationToken, type VirtualBet, type InsertVirtualBet, type AdminSettings, type InsertAdminSettings, type Friendship, type FriendWithProfile, type Redemption } from "@shared/schema";
+import { users, userProfiles, games, gameParticipants, passwordResetTokens, emailVerificationTokens, virtualBets, adminSettings, friendships, redemptions } from "@shared/schema";
+import type { Prize } from "@shared/prizes";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { db } from "./db";
@@ -103,6 +104,16 @@ export interface IStorage {
   // Admin settings
   getAdminSettings(): Promise<AdminSettings>;
   updateAdminSettings(updates: Partial<InsertAdminSettings>): Promise<AdminSettings>;
+
+  // Prizes
+  /**
+   * Atomic spend-credits + record-redemption + apply-payload. Returns the
+   * created redemption row. Throws "Insufficient credits" if the balance
+   * can't cover the cost — the whole transaction rolls back so chips don't
+   * change either.
+   */
+  redeemPrize(userId: string, prize: Prize): Promise<Redemption>;
+  listUserRedemptions(userId: string, limit?: number): Promise<Redemption[]>;
 
   // Friends
   /** All accepted + pending friendships involving this user (hydrated with profile). */
@@ -518,6 +529,60 @@ export class DatabaseStorage implements IStorage {
       .where(eq(adminSettings.id, existing.id))
       .returning();
     return updated;
+  }
+
+  // ── Prizes ───────────────────────────────────────────────────────────────
+
+  async redeemPrize(userId: string, prize: Prize): Promise<Redemption> {
+    // One transaction: lock the profile row, check balance, deduct, apply
+    // payload, insert redemption. Any throw rolls everything back so a
+    // partial state never leaks to the client.
+    return db.transaction(async (tx) => {
+      const [profile] = await tx
+        .select()
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, userId))
+        .for('update');
+      if (!profile) throw new Error('User profile not found');
+      if (profile.earnedCredits < prize.creditCost) {
+        throw new Error('Insufficient credits');
+      }
+
+      const updates: Partial<typeof userProfiles.$inferInsert> = {
+        earnedCredits: profile.earnedCredits - prize.creditCost,
+      };
+
+      if (prize.kind === 'extra_chips') {
+        const chips = Number(prize.payload.chips ?? 0);
+        if (!Number.isFinite(chips) || chips <= 0) throw new Error('Invalid prize payload');
+        updates.virtualChips = profile.virtualChips + chips;
+      } else {
+        throw new Error(`Unknown prize kind: ${prize.kind}`);
+      }
+
+      await tx.update(userProfiles).set(updates).where(eq(userProfiles.userId, userId));
+
+      const [row] = await tx
+        .insert(redemptions)
+        .values({
+          userId,
+          prizeId: prize.id,
+          creditsSpent: prize.creditCost,
+          prizeSnapshot: prize,
+          fulfilledAt: new Date(),
+        })
+        .returning();
+      return row;
+    });
+  }
+
+  async listUserRedemptions(userId: string, limit = 20): Promise<Redemption[]> {
+    return db
+      .select()
+      .from(redemptions)
+      .where(eq(redemptions.userId, userId))
+      .orderBy(desc(redemptions.createdAt))
+      .limit(limit);
   }
 
   // ── Friends ──────────────────────────────────────────────────────────────

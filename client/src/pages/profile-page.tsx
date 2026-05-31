@@ -15,6 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import PrizeStorePanel from '@/components/PrizeStorePanel';
 
 const profileFormSchema = z.object({
   displayName: z.string().max(50).optional(),
@@ -232,6 +233,8 @@ export default function ProfilePage() {
             </Form>
           </CardContent>
         </Card>
+
+        <PrizeStorePanel />
 
         {user.tier === 'free' && (
           <Card>
